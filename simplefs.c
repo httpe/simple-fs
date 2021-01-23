@@ -26,7 +26,7 @@
 #define FS_MAX_FILE_COUNT 16
 // Include terminal \0
 #define FS_MAX_FILENAME_LEN 12
-#define FS_DATA_BLOCK_LEN 256
+#define FS_DATA_BLOCK_LEN 512
 
 typedef struct file_entry {
     char path[FS_MAX_FILENAME_LEN];
@@ -373,6 +373,42 @@ static int fs_truncate(const char *path, off_t size,
 	return r;
 }
 
+static int get_parent(const char* path, file_entry_t** parent_entry) {
+    int lenpath = strlen(path);
+
+    if(strcmp(path, "/")==0) {
+        *parent_entry = &fs_header.file_table[0];
+        return 0;
+    }
+
+    int i;
+    for(i=lenpath-1;i>=0;i--) {
+        if(path[i]=='/') {
+            break;
+        }
+        if(i==0) {
+            // not a valid absolute path
+            return -1;
+        }
+    }
+
+    char parent[FS_MAX_FILENAME_LEN];
+    // char name[FS_MAX_FILENAME_LEN];
+    if(i>0) {
+        memmove(parent, path, i);
+        parent[i] = 0;
+    } else {
+        parent[0] = '/';
+        parent[1] = 0;
+    }
+
+    // memcpy(name, &path[i+1], lenpath - i - 1);
+
+    int parent_idx = match_path(&fs_header, parent, parent_entry);
+
+    return parent_idx;
+}
+
 static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
 {
     printf("fs_mknod: %s\n", path);
@@ -386,6 +422,12 @@ static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
     if(lenpath >= FS_MAX_FILENAME_LEN) {
         // equal sign: the max len include the terminal \0
         return -EPERM;
+    }
+
+    file_entry_t* parent_entry;
+    int parent_idx = get_parent(path, &parent_entry);
+    if(parent_idx < 0) {
+        return -ENOENT;
     }
 
     for(int i=0; i<FS_MAX_FILE_COUNT; i++) {
@@ -409,6 +451,12 @@ static int fs_mkdir(const char *path, mode_t mode)
     if(lenpath >= FS_MAX_FILENAME_LEN) {
         // equal sign: the max len include the terminal \0
         return -EPERM;
+    }
+
+    file_entry_t* parent_entry;
+    int parent_idx = get_parent(path, &parent_entry);
+    if(parent_idx < 0) {
+        return -ENOENT;
     }
 
     for(int i=0; i<FS_MAX_FILE_COUNT; i++) {
@@ -478,6 +526,76 @@ static int fs_rmdir(const char *path)
 }
 
 
+static int fs_rename(const char *from, const char *to, unsigned int flags)
+{
+    printf("fs_rename: %s to %s\n", from, to);
+
+    file_entry_t* entry_from;
+    int from_idx = match_path(&fs_header, from, &entry_from);
+
+    if(from_idx < 0) {
+        return -ENOENT;
+    }
+    if(from_idx == 0) {
+        // Not allow renaming root directory
+        return -EPERM;
+    }
+
+    file_entry_t* entry_to;
+    int to_idx = match_path(&fs_header, to, &entry_to);
+    if(to_idx >= 0) {
+        // New name already exist
+        return -EPERM;
+    }
+
+    int lento = strlen(to);
+    if(lento >= FS_MAX_FILENAME_LEN) {
+        return -EPERM;
+    }
+
+    file_entry_t* entry_new_parent;
+    int new_parent_idx = get_parent(to, &entry_new_parent);
+    if(new_parent_idx < 0 || !entry_new_parent->attr.is_dir) {
+        // New dir not exist or is not dir
+        return -EPERM;
+    }
+
+    fs_header_t backup;
+    memmove(&backup, &fs_header, sizeof(fs_header));
+
+    strcpy(entry_from->path, to);
+
+    char name[FS_MAX_FILENAME_LEN];
+    if(entry_from->attr.is_dir) {
+        int err = 0;
+        for(int i=0; i<FS_MAX_FILE_COUNT; i++) {
+            const char* filename = get_filename(from, fs_header.file_table[i].path);
+            if(filename != NULL) {
+                int lenfile = strlen(filename);
+                if(lento + 1 + lenfile >= FS_MAX_FILENAME_LEN) {
+                    // new file name too long
+                    err = 1;
+                    break;
+                }
+                strcpy(name, to);
+                name[lento] = '/';
+                memmove(&name[lento+1], filename, lenfile);
+                name[lento + 1 + lenfile] = 0;
+                strcpy(fs_header.file_table[i].path, name);
+            }
+        }
+        if(err) {
+            // Roll back
+            memmove(&fs_header, &backup, sizeof(fs_header));
+            return -EPERM;
+        }
+    }
+
+    int res = write_header();
+
+	return res;
+}
+
 //Ref: https://libfuse.github.io/doxygen/structfuse__operations.html
 static const struct fuse_operations fs_oper = {
 	.init       = fs_init,
@@ -491,6 +609,7 @@ static const struct fuse_operations fs_oper = {
     .unlink     = fs_unlink,
 	.rmdir		= fs_rmdir,
     .truncate   = fs_truncate,
+    .rename     = fs_rename,
 };
 
 static void show_help(const char *progname)

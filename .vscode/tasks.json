@@ -29,7 +29,7 @@
         {
             "type":"shell",
             "label": "Umount FUSE",
-            "command": "fusermount -u mnt; rm simpleFS.bin"
+            "command": "fusermount -u mnt; rm simple_fs_image.bin"
         }
     ],
     "version": "2.0.0"

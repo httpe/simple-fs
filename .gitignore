@@ -1,4 +1,5 @@
-simplefs
+simple_fs
+simple_fs_image.bin
 mnt/**
 test
 test.c

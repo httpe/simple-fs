@@ -3,7 +3,8 @@
 // Source: https://github.com/libfuse/libfuse/blob/master/example/passthrough.c
 // Source: https://github.com/libfuse/libfuse/blob/master/example/hello.c
 
-// Compile:  gcc -Wall simplefs.c `pkg-config fuse3 --cflags --libs` -o simplefs
+// Compile:  gcc -Wall simple_fs_image.c `pkg-config fuse3 --cflags --libs` -o simple_fs_image
+// Run: simple_fs_image -f simple_fs_image.bin
 
 #define FUSE_USE_VERSION 31
 
@@ -617,7 +618,7 @@ static void show_help(const char *progname)
 	printf("usage: %s [options] <mountpoint>\n\n", progname);
 	printf("File-system specific options:\n"
 	       "    --image_path=<s>    Path to the file system disk image file\n"
-	       "                        (default \"simpleFS.bin\")\n"
+	       "                        (default \"simple_fs_image.bin\")\n"
 	       "\n");
 }
 
@@ -648,7 +649,7 @@ int main(int argc, char *argv[])
 	/* Set defaults -- we have to use strdup so that
 	   fuse_opt_parse can free the defaults if other
 	   values are specified */
-	options.image_path = strdup("simpleFS.bin");
+	options.image_path = strdup("simple_fs_image.bin");
 
 	/* Parse options */
 	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)

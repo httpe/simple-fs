@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/include/fuse3"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "gnu17",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "gcc-x64",
+            "compilerArgs": [
+                "-lfuse3",
+                "-lpthread",
+                "-Wall"
+            ]
+        }
+    ],
+    "version": 4
+}

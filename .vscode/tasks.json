@@ -3,7 +3,7 @@
         {
             "type":"shell",
             "label": "Build",
-            "command": "make all",
+            "command": "make all; mkdir -p mnt",
             "problemMatcher": {
                 "base": "$gcc",
             }

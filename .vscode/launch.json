@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${fileDirname}/${fileBasenameNoExtension}",
             "args": [
-                "-f",
+                "-d",
                 "mnt"
             ],
             "stopAtEntry": false,
@@ -25,8 +25,8 @@
                     "ignoreFailures": true
                 }
             ],
-            "preLaunchTask": "C/C++: gcc build active file",
-            "postDebugTask": "Umount FUSE",
+            "preLaunchTask": "Build",
+            "postDebugTask": "Umount FUSE and Delete Disk Image",
             "miDebuggerPath": "/usr/bin/gdb"
         }
     ]

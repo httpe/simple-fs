@@ -23,7 +23,7 @@ static file_storage_t disk_image_internal_info;
 static block_storage_t* storage_list[MAX_STORAGE_DEV_COUNT];
 static uint32_t n_storage;
 
-int32_t read_blocks(block_storage_t* storage, void* buff,  uint32_t LBA, uint32_t block_count)
+int64_t read_blocks(block_storage_t* storage, void* buff,  uint32_t LBA, uint32_t block_count)
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_RDONLY);
@@ -34,7 +34,7 @@ int32_t read_blocks(block_storage_t* storage, void* buff,  uint32_t LBA, uint32_
     return res;
 }
 
-int32_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_count, const void* buff)
+int64_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_count, const void* buff)
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_WRONLY);
@@ -79,7 +79,7 @@ block_storage_t* initialize_disk_image(const char* image_path)
 
 block_storage_t* get_block_storage(uint32_t device_id)
 {
-    for(int i=0; i<=n_storage; i++) {
+    for(uint32_t i=0; i<=n_storage; i++) {
         if(storage_list[i]->device_id == device_id) {
             return storage_list[i];
         }

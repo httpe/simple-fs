@@ -57,17 +57,17 @@ static void *fs_init(struct fuse_conn_info *conn,
 	return NULL;
 }
 
-static int block_read_bytes(void* buff, size_t size, off_t offset) {
-    size_t lba_begin = offset / storage->block_size;
+static uint32_t block_read_bytes(void* buff, uint32_t size, off_t offset) {
+    uint32_t lba_begin = offset / storage->block_size;
     if(offset + size == 0) {
         return 0;
     }
-    size_t lba_end = (offset + size - 1) / storage->block_size;
-    size_t block_count = lba_end - lba_begin + 1;
-    size_t block_buff_size = block_count*storage->block_size;
+    uint32_t lba_end = (offset + size - 1) / storage->block_size;
+    uint32_t block_count = lba_end - lba_begin + 1;
+    uint32_t block_buff_size = block_count*storage->block_size;
     void* block_buff = malloc(block_buff_size);
     memset(block_buff, 0, block_buff_size);
-    int read_in = storage->read_blocks(storage, block_buff, lba_begin, block_count);
+    int64_t read_in = storage->read_blocks(storage, block_buff, lba_begin, block_count);
 
     if(read_in < block_buff_size) {
         return 0;
@@ -78,28 +78,28 @@ static int block_read_bytes(void* buff, size_t size, off_t offset) {
 }
 
 
-static int block_write_bytes(const void* buff, size_t size, off_t offset) {
-    size_t lba_begin = offset / storage->block_size;
+static uint32_t block_write_bytes(const void* buff, uint32_t size, off_t offset) {
+    uint32_t lba_begin = offset / storage->block_size;
     if(offset + size == 0) {
         return 0;
     }
-    size_t lba_end = (offset + size - 1) / storage->block_size;
-    size_t block_count = lba_end - lba_begin + 1;
-    size_t block_buff_size = block_count*storage->block_size;
+    uint32_t lba_end = (offset + size - 1) / storage->block_size;
+    uint32_t block_count = lba_end - lba_begin + 1;
+    uint32_t block_buff_size = block_count*storage->block_size;
     const void* block_buff;
     if(offset % storage->block_size == 0 && size %storage->block_size == 0) {
         block_buff = buff;
     } else {
         void* block_buff_alloc = malloc(block_buff_size);
         memset(block_buff_alloc, 0, block_buff_size);
-        int read_in = storage->read_blocks(storage, block_buff_alloc, lba_begin, block_count);
+        int64_t read_in = storage->read_blocks(storage, block_buff_alloc, lba_begin, block_count);
         if(read_in < block_buff_size) {
             return 0;
         }
         memmove(block_buff_alloc + offset % storage->block_size, buff, size);
         block_buff = block_buff_alloc;
     }
-    int write_out = storage->write_blocks(storage, lba_begin, block_count, block_buff);
+    int64_t write_out = storage->write_blocks(storage, lba_begin, block_count, block_buff);
     if(write_out < block_buff_size) {
         return 0;
     } else {
@@ -128,7 +128,6 @@ static int match_path(fs_header_t* header, const char* path, file_entry_t** entr
 static int fs_getattr(const char *path, struct stat *stbuf,
 			 struct fuse_file_info *fi)
 {
-
 	(void) fi;
 
 	memset(stbuf, 0, sizeof(struct stat));
@@ -171,7 +170,7 @@ static const char* get_filename(const char* dir, const char* path)
         offset = 0;
     }
 
-    for(int i=lendir + offset; i<lenpath; i++) {
+    for(size_t i=lendir + offset; i<lenpath; i++) {
         // filter out files in sub-folders
         // offset: for case dir="/d", path="/d/a", skip the second '/'
         if(path[i] == '/') {
@@ -187,7 +186,6 @@ static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 			 off_t offset, struct fuse_file_info *fi,
 			 enum fuse_readdir_flags flags)
 {
-
 	(void) offset;
 	(void) fi;
 	(void) flags;
@@ -212,6 +210,7 @@ static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 static int fs_open(const char *path, struct fuse_file_info *fi)
 {
+    (void) fi;
 
     file_entry_t* entry;
     int file_idx = match_path(&fs_header, path, &entry);
@@ -233,6 +232,7 @@ static int fs_read(const char *path, char *buf, size_t size, off_t offset,
 		      struct fuse_file_info *fi)
 {
 	(void) fi;
+
     file_entry_t* entry;
     int file_idx = match_path(&fs_header, path, &entry);
 
@@ -245,8 +245,6 @@ static int fs_read(const char *path, char *buf, size_t size, off_t offset,
     }
 
     if(offset >= FS_DATA_BLOCK_LEN) {
-        // if(fi == NULL)
-        //     close(fd);
         return 0;
     }
 
@@ -264,6 +262,8 @@ static int fs_read(const char *path, char *buf, size_t size, off_t offset,
 static int fs_write(const char *path, const char *buf, size_t size,
 		     off_t offset, struct fuse_file_info *fi)
 {
+    (void) fi;
+    
     file_entry_t* entry;
     int file_idx = match_path(&fs_header, path, &entry);
 
@@ -275,14 +275,12 @@ static int fs_write(const char *path, const char *buf, size_t size,
         return -EPERM;
     }
 
-	(void) fi;
-
     if(offset + size > FS_DATA_BLOCK_LEN) {
         return -ENOSPC;
     }
 
     int file_offset = sizeof(fs_header_t) + FS_DATA_BLOCK_LEN*file_idx;
-    int written = block_write_bytes(buf, size, file_offset + offset);
+    uint32_t written = block_write_bytes(buf, size, file_offset + offset);
     if(written != size) {
         return 0;
     }
@@ -301,6 +299,8 @@ static int fs_write(const char *path, const char *buf, size_t size,
 static int fs_truncate(const char *path, off_t size,
 			struct fuse_file_info *fi)
 {
+    (void) fi;
+    
     file_entry_t* entry;
     int file_idx = match_path(&fs_header, path, &entry);
 
@@ -311,8 +311,6 @@ static int fs_truncate(const char *path, off_t size,
         // Not allow to write content to a directory entry
         return -EPERM;
     }
-
-	(void) fi;
 
     if(size > FS_DATA_BLOCK_LEN) {
         return -ENOSPC;
@@ -377,6 +375,7 @@ static int get_parent(const char* path, file_entry_t** parent_entry) {
 
 static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
 {
+    (void) rdev;
 
     if(!(S_ISREG(mode) || S_ISDIR(mode))) {
         // Only support creating regular file or directory
@@ -410,6 +409,8 @@ static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
 
 static int fs_mkdir(const char *path, mode_t mode)
 {
+    (void) mode;
+
     size_t lenpath = strlen(path);
     if(lenpath >= FS_MAX_FILENAME_LEN) {
         // equal sign: the max len include the terminal \0
@@ -488,6 +489,8 @@ static int fs_rmdir(const char *path)
 
 static int fs_rename(const char *from, const char *to, unsigned int flags)
 {
+    (void) flags;
+
     file_entry_t* entry_from;
     int from_idx = match_path(&fs_header, from, &entry_from);
 
@@ -554,28 +557,6 @@ static int fs_rename(const char *from, const char *to, unsigned int flags)
 	return res;
 }
 
-// static off_t fs_lseek(const char *path, off_t off, int whence, struct fuse_file_info *fi)
-// {
-//     // printf("fs_lseek: %s, %ld, %d", path, off, whence);
-//     // errno = 1;
-//     // return -1;
-//     return 0;
-// }
-
-// static int fs_release(const char *path, struct fuse_file_info *fi)
-// {
-// 	// printf("fs_release: %s", path);
-//     (void) path;
-// 	// close(fi->fh);
-// 	return 0;
-// }
-
-
-// static int fs_flush(const char * path, struct fuse_file_info * fi)
-// {
-//     return 0;
-// }
-
 //Ref: https://libfuse.github.io/doxygen/structfuse__operations.html
 static const struct fuse_operations fs_oper = {
 	.init       = fs_init,
@@ -590,9 +571,6 @@ static const struct fuse_operations fs_oper = {
 	.rmdir		= fs_rmdir,
     .truncate   = fs_truncate,
     .rename     = fs_rename,
-    // .lseek      = fs_lseek,
-    // .release    = fs_release,
-    // .flush      = fs_flush,
 };
 
 static int create_fs()

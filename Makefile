@@ -1,5 +1,5 @@
 
-CFLAGS:=-g -Wall
+CFLAGS:=-g -Wall -Wextra
 INCLUDEDIR:=$(INCLUDEDIR) -I/usr/include/fuse3
 LIBS:=$(LIBS) -lfuse3 -lpthread
 

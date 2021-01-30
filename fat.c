@@ -316,6 +316,7 @@ fat_iterate_dir_status_t fat32_iterate_dir(block_storage_t* storage, fat32_meta_
             for(uint32_t i=0; i<lfn_name_byte_len/2; i++) {
                 uint8_t usc2_first = start_of_filename[i*2];
                 uint8_t usc2_second = start_of_filename[i*2+1];
+                // Unicode (and UCS-2) is compatible with 7-bit ASCII / US-ASCII
                 if(usc2_first > 127 || usc2_second != 0) {
                     // if not US-ASCII
                     file_entry->filename[i] = '?';

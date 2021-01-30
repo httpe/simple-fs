@@ -1,13 +1,15 @@
-#include "block_io.h"
-
 #include <stddef.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
+#include <stdio.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#include "block_io.h"
 
 #define BLOCK_COUNT 64
 #define BLOCK_SIZE 512
@@ -23,7 +25,7 @@ static file_storage_t disk_image_internal_info;
 static block_storage_t* storage_list[MAX_STORAGE_DEV_COUNT];
 static uint32_t n_storage;
 
-int64_t read_blocks(block_storage_t* storage, void* buff,  uint32_t LBA, uint32_t block_count)
+uint32_t read_blocks(block_storage_t* storage, uint8_t* buff,  uint32_t LBA, uint32_t block_count)
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_RDONLY);
@@ -34,7 +36,7 @@ int64_t read_blocks(block_storage_t* storage, void* buff,  uint32_t LBA, uint32_
     return res;
 }
 
-int64_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_count, const void* buff)
+uint32_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_count, const uint8_t* buff)
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_WRONLY);
@@ -50,6 +52,7 @@ int64_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_coun
 
 block_storage_t* initialize_disk_image(const char* image_path) 
 {
+    uint32_t image_size;
     // Create disk image if not exist
     if(access(image_path, F_OK) != 0) {
         char buff[BLOCK_SIZE*BLOCK_COUNT] = {0};
@@ -59,7 +62,19 @@ block_storage_t* initialize_disk_image(const char* image_path)
         if(written < BLOCK_SIZE*BLOCK_COUNT) {
             return NULL;
         }
+        image_size = BLOCK_SIZE*BLOCK_COUNT;
+    } else {
+        FILE * pFile = fopen (image_path, "rb");
+        fseek(pFile, 0L, SEEK_END);
+        int size = ftell(pFile);
+        fclose(pFile);
+        if(size < 0) {
+            return NULL;
+        }
+        image_size = size;
     }
+    assert(image_size%BLOCK_SIZE==0);
+    uint32_t block_count = image_size / BLOCK_SIZE;
 
     // Use absolute path since FUSE will change curent dirrectory to root dir /
     strcpy(disk_image_internal_info.image_path, realpath(image_path, NULL));
@@ -68,7 +83,7 @@ block_storage_t* initialize_disk_image(const char* image_path)
         .device_id = 0, 
         .type=BLK_STORAGE_TYP_IMAGE_FILE, 
         .block_size=BLOCK_SIZE, 
-        .block_count=BLOCK_COUNT, 
+        .block_count=block_count, 
         .read_blocks=read_blocks,
         .write_blocks=write_blocks,
         .internal_info=&disk_image_internal_info

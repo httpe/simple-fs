@@ -67,7 +67,7 @@ static uint32_t block_read_bytes(void* buff, uint32_t size, off_t offset) {
     uint32_t block_buff_size = block_count*storage->block_size;
     void* block_buff = malloc(block_buff_size);
     memset(block_buff, 0, block_buff_size);
-    int64_t read_in = storage->read_blocks(storage, block_buff, lba_begin, block_count);
+    uint32_t read_in = storage->read_blocks(storage, block_buff, lba_begin, block_count);
 
     if(read_in < block_buff_size) {
         return 0;
@@ -92,14 +92,14 @@ static uint32_t block_write_bytes(const void* buff, uint32_t size, off_t offset)
     } else {
         void* block_buff_alloc = malloc(block_buff_size);
         memset(block_buff_alloc, 0, block_buff_size);
-        int64_t read_in = storage->read_blocks(storage, block_buff_alloc, lba_begin, block_count);
+        uint32_t read_in = storage->read_blocks(storage, block_buff_alloc, lba_begin, block_count);
         if(read_in < block_buff_size) {
             return 0;
         }
         memmove(block_buff_alloc + offset % storage->block_size, buff, size);
         block_buff = block_buff_alloc;
     }
-    int64_t write_out = storage->write_blocks(storage, lba_begin, block_count, block_buff);
+    uint32_t write_out = storage->write_blocks(storage, lba_begin, block_count, block_buff);
     if(write_out < block_buff_size) {
         return 0;
     } else {

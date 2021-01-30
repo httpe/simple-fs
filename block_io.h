@@ -13,8 +13,8 @@ typedef struct block_storage {
     block_storage_type_t type;
     uint32_t block_size; // block (sector) size in bytes
     uint32_t block_count; // total number of blocks
-    int64_t (*read_blocks)(struct block_storage* storage, void* buff, uint32_t LBA, uint32_t block_count); // return bytes read
-    int64_t (*write_blocks)(struct block_storage* storage, uint32_t LBA, uint32_t block_count, const void* buff); // return bytes written
+    uint32_t (*read_blocks)(struct block_storage* storage, uint8_t* buff, uint32_t LBA, uint32_t block_count); // return bytes read, 0 means error
+    uint32_t (*write_blocks)(struct block_storage* storage, uint32_t LBA, uint32_t block_count, const uint8_t* buff); // return bytes written,  0 means error
     void* internal_info; // internal data structure for the specfic storage type
 } block_storage_t;
 

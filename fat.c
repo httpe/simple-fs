@@ -4,12 +4,15 @@
 #include <errno.h>
 #include <assert.h>
 #include <stddef.h>
+#include <time.h>
 
 #include "fat.h"
 #include "block_io.h"
 
 #define FUSE_USE_VERSION 31
 #include <fuse.h>
+
+#define HAS_ATTR(file,attr) (((file)&(attr)) == (attr))
 
 static fat32_meta_t global_fat_meta;
 static block_storage_t* global_storage;
@@ -378,7 +381,7 @@ static fat_resolve_path_status_t fat32_resolve_path(const char *path, fat32_file
             }
         } else {
             if(strcmp((char*) file_entry->filename, filename) == 0) {
-                if((file_entry->direntry.attr & FAT_ATTR_DIRECTORY) != FAT_ATTR_DIRECTORY) {
+                if(!HAS_ATTR(file_entry->direntry.attr,FAT_ATTR_DIRECTORY)) {
                     // not a dir
                     return FAT_PATH_RESOLVE_INVALID_PATH;
                 }
@@ -417,7 +420,7 @@ static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         iter.current_cluster = global_fat_meta.bootsector->root_cluster;
     }
     if(status == FAT_PATH_RESOLVE_FOUND) {
-        if((file_entry.direntry.attr & FAT_ATTR_DIRECTORY) != FAT_ATTR_DIRECTORY) {
+        if(!HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
             return -ENOTDIR;
         }
         iter.current_cluster = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
@@ -439,11 +442,45 @@ static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
             return 0;
         }
         assert(iter_status == FAT_DIR_ITER_VALID_ENTRY);
-        if((file_entry.direntry.attr & FAT_ATTR_VOLUME_ID) == FAT_ATTR_VOLUME_ID) {
+        if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_VOLUME_ID)) {
             // Skip Volume label entry when listing directory
             continue;
         }
         filler(buf, (char*) file_entry.filename, NULL, 0, 0);
+    }
+}
+
+time_t convert_datetime(uint16_t date_entry, uint16_t time_entry) {
+	struct tm * time_info;
+	time_t raw_time;
+
+	time(&raw_time);
+	time_info = localtime(&raw_time);
+	time_info->tm_sec = (time_entry & 0x1f) << 1;
+	time_info->tm_min = (time_entry & 0x7E0) >> 5;
+	time_info->tm_hour = (time_entry & 0xF800) >> 11;
+	time_info->tm_mday = date_entry & 0x1F;
+	time_info->tm_mon = ((date_entry & 0x1E0) >> 5) - 1;
+	time_info->tm_year = ((date_entry & 0xFE00) >> 9) + 80;
+	return mktime(time_info);
+}
+
+static uint32_t count_clusters(uint32_t cluster_number)
+{
+    uint32_t next_cluster = 0;
+    fat_cluster_status_t cluster_status;
+    uint32_t total_cluster_count = 0;
+    while(1) {
+        cluster_status = fat32_get_cluster_info(&global_fat_meta, cluster_number, &next_cluster);
+        if(cluster_status == FAT_CLUSTER_BAD || cluster_status == FAT_CLUSTER_FREE || cluster_status == FAT_CLUSTER_RESERVED) {
+            return 0;
+        }
+        total_cluster_count++;
+        if(cluster_status == FAT_CLUSTER_EOC) {
+            return total_cluster_count;
+        }
+        assert(cluster_status == FAT_CLUSTER_USED);
+        cluster_number = next_cluster;
     }
 }
 
@@ -457,10 +494,14 @@ static int fs_getattr(const char *path, struct stat *stbuf,
     fat32_file_entry_t file_entry = {0};
     fat_resolve_path_status_t status = fat32_resolve_path(path, &file_entry);
 
+    uint32_t bytes_per_cluster = global_fat_meta.bootsector->bytes_per_sector*global_fat_meta.bootsector->sectors_per_cluster;
+
     if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
         // For root dir
-        stbuf->st_mode = S_IFDIR | 0755;
+        stbuf->st_mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
         stbuf->st_nlink = 2;
+        uint32_t cluster_number = global_fat_meta.bootsector->root_cluster;
+        stbuf->st_size = count_clusters(cluster_number)*bytes_per_cluster;
         return 0;
     }
     if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
@@ -474,15 +515,24 @@ static int fs_getattr(const char *path, struct stat *stbuf,
     }
 
     if(status == FAT_PATH_RESOLVE_FOUND) {
-        if ((file_entry.direntry.attr & FAT_ATTR_DIRECTORY) == FAT_ATTR_DIRECTORY) {
-            stbuf->st_mode = S_IFDIR | 0755;
-            stbuf->st_nlink = 2;
+        if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_READ_ONLY)) {
+            stbuf->st_mode = S_IRUSR | S_IRGRP | S_IROTH;
         } else {
-            stbuf->st_mode = S_IFREG | 0444;
+            stbuf->st_mode = S_IRWXU | S_IRWXG | S_IRWXO;
+        }
+        if (HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
+            stbuf->st_mode |= S_IFDIR;
+            stbuf->st_nlink = 2;
+            uint32_t cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
+            stbuf->st_size = count_clusters(cluster_number)*bytes_per_cluster;
+        } else {
+            stbuf->st_mode |= S_IFREG;
             stbuf->st_nlink = 1;
             stbuf->st_size = file_entry.direntry.size;
         }
     }
+	stbuf->st_mtime = convert_datetime(file_entry.direntry.mtime_date, file_entry.direntry.mtime_time);
+	stbuf->st_ctime = convert_datetime(file_entry.direntry.ctime_date, file_entry.direntry.ctime_time);
 
     return 0;
 }
@@ -515,7 +565,7 @@ static int fs_read(const char *path, char *buf, size_t size, off_t offset,
 
     assert(status == FAT_PATH_RESOLVE_FOUND);
 
-    if((file_entry.direntry.attr & FAT_ATTR_DIRECTORY) == FAT_ATTR_DIRECTORY) {
+    if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
         return -EISDIR;
     }
 

@@ -3,16 +3,24 @@ CFLAGS:=-g -Wall -Wextra
 INCLUDEDIR:=$(INCLUDEDIR) -I/usr/include/fuse3
 LIBS:=$(LIBS) -lfuse3 -lpthread
 
-OBJS=\
+SHARED_OBJS=\
 block_io.o \
+
+SIMPLE_FS_OBJS=\
 simple_fs_block.o \
+
+FAT_OBJS=\
+fat.o \
 
 .PHONY: all clean
 
-all: simple_fs_block
+all: simple_fs_block fat
 
 # Ref: https://www.gnu.org/software/make/manual/html_node/Automatic-Variables.html#Automatic-Variables
-simple_fs_block: $(OBJS)
+simple_fs_block: $(SIMPLE_FS_OBJS) $(SHARED_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+
+fat: $(FAT_OBJS) $(SHARED_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 # compile and generate dependency info (*.d) by -MD
@@ -27,6 +35,7 @@ simple_fs_block: $(OBJS)
 clean:
 	rm -f *.o
 	rm -f simple_fs_block
+	rm -f fat
 	rm -f *.d
 
 # include make rules from *.d files, which dictate the dependency of c files on header

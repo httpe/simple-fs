@@ -11,7 +11,8 @@
             "program": "${fileDirname}/${fileBasenameNoExtension}",
             "args": [
                 "-d",
-                "mnt"
+                "-s",
+                "~/mnt/myfat"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

@@ -615,9 +615,13 @@ static int fs_read(const char *path, char *buf, size_t size, off_t offset,
             unsigned_offset -= bytes_per_cluster;
         }
 
-        if(cluster_status == FAT_CLUSTER_EOC || size == 0) {
+        if(size == 0) {
             free(cluster_buffer);
             return total_bytes_read;
+        }
+
+        if(cluster_status == FAT_CLUSTER_EOC) {
+            return -EIO;
         } else {
             cluster = next_cluster;
         }

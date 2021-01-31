@@ -388,8 +388,9 @@ fat_iterate_dir_status_t fat32_iterate_dir(block_storage_t* storage, fat32_meta_
         // 6. Is there a long file name in the temporary buffer? Yes, goto 7. No, goto 8
         // 7. Apply the long file name to the entry that you just read and clear the temporary buffer. goto 8
         if(iter->lfn_entry_buffered > 0 && iter->lfn_checksum == lfn_checksum(file_entry->direntry.nameext)) {
-            // We do not support USC-2 UNICODE character, any non US-ASCII character will be replaced by '?'
-            // since '?' itself is not allowed in normal FAT file name
+            // We do not support USC-2 UNICODE character, any non US-ASCII character will be replaced by '_'
+            // as per Microsoft's documentation "Microsoft Extensible Firmware Initiative FAT32 File System Specification" 
+            // https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc
             uint32_t lfn_name_byte_len =  FAT32_USC2_FILE_NAME_LEN_PER_LFN*2*iter->lfn_entry_buffered;
             uint8_t* start_of_filename = &file_entry->filename[sizeof(file_entry->filename)] - lfn_name_byte_len;
             for(uint32_t i=0; i<lfn_name_byte_len/2; i++) {
@@ -398,7 +399,7 @@ fat_iterate_dir_status_t fat32_iterate_dir(block_storage_t* storage, fat32_meta_
                 // Unicode (and UCS-2) is compatible with 7-bit ASCII / US-ASCII
                 if(usc2_first > 127 || usc2_second != 0) {
                     // if not US-ASCII
-                    file_entry->filename[i] = '?';
+                    file_entry->filename[i] = '_';
                 } else {
                     file_entry->filename[i] = usc2_first;
                 }
@@ -805,6 +806,7 @@ uint32_t fat32_free_cluster(block_storage_t* storage, fat32_meta_t* meta, uint32
 
 }
 
+// Free trailing non-used clusters for a directory
 static int32_t fat32_trim_directory(block_storage_t* storage, fat32_meta_t* meta, uint32_t start_cluster_number_to_trim)
 {
     fat_cluster_t cluster;

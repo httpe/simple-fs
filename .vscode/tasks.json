@@ -3,7 +3,7 @@
         {
             "type":"shell",
             "label": "Build",
-            "command": "make all; mkdir -p mnt",
+            "command": "make all; mkdir -p mnt; cp testfs.fat fat32_fs_image.bin",
             "problemMatcher": {
                 "base": "$gcc",
             }

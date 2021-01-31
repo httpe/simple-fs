@@ -84,6 +84,10 @@ typedef union {
 typedef struct fat32_file_entry {
     fat32_direntry_short_t direntry;
     uint8_t filename[FAT32_LONG_NAME_MAX_LEN_USC2*2+1];// +1: space for null terminator
+	uint32_t dir_entry_cluster_start;
+	uint32_t dir_entry_cluster_end;
+	uint32_t dir_entry_idx_start;
+	uint32_t dir_entry_idx_end;
 } fat32_file_entry_t;
 
 
@@ -94,7 +98,7 @@ typedef enum {
 	FAT_ATTR_VOLUME_ID = 0x08,
 	FAT_ATTR_DIRECTORY = 0x10,
 	FAT_ATTR_ARCHIVE = 0x20,
-	FAT_ATTR_LFN = 0xf
+	FAT_ATTR_LFN = 0x0F
 } fat_attr;
 
 // Ref: http://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc
@@ -108,18 +112,30 @@ typedef struct fat32_fsinfo {
     uint32_t trailing_signature;
 } __attribute__ ((__packed__)) fat32_fsinfo_t;
 
+typedef struct fat_cluster_stripped {
+	uint32_t next;
+	uint32_t prev;
+} fat_cluster_stripped_t;
+
 typedef struct fat32_meta {
     fat32_bootsector_t* bootsector;
     fat32_fsinfo_t* fs_info;
     uint32_t* fat;
+	fat_cluster_stripped_t* linked_fat;
 } fat32_meta_t;
 
+typedef struct fat_cluster {
+	uint32_t curr;
+	uint32_t next;
+	uint32_t prev;
+} fat_cluster_t;
+
 typedef enum fat_cluster_status {
-    FAT_CLUSTER_FREE,
-    FAT_CLUSTER_BAD,
-    FAT_CLUSTER_RESERVED,
-    FAT_CLUSTER_EOC,
-    FAT_CLUSTER_USED
+    FAT_CLUSTER_FREE = 0,
+    FAT_CLUSTER_BAD = 0x00000007,
+    FAT_CLUSTER_RESERVED = 0x00000001,
+    FAT_CLUSTER_EOC = 0xFFFFFFFF,
+    FAT_CLUSTER_USED = 0x00000002
 } fat_cluster_status_t;
 
 typedef struct fat_dir_iterator {
@@ -134,7 +150,6 @@ typedef enum fat_iterate_dir_status {
 	FAT_DIR_ITER_VALID_ENTRY,
 	FAT_DIR_DOT_ENTRY,
 	FAT_DIR_ITER_DELETED,
-	FAT_DIR_ITER_UNUSED_ENTRY,
 	FAT_DIR_ITER_NO_MORE_ENTRY,
 	FAT_DIR_ITER_ERROR
 } fat_iterate_dir_status_t;

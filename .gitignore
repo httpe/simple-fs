@@ -1,6 +1,8 @@
 simple_fs
 simple_fs_block
-simple_fs_image.bin
+*.bin
+*.fat
+fat
 mnt/**
 test
 test.c

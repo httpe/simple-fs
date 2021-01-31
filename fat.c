@@ -295,7 +295,7 @@ void trim_space(char* str)
 fat_iterate_dir_status_t fat32_iterate_dir(block_storage_t* storage, fat32_meta_t* meta, fat_dir_iterator_t* iter, fat32_file_entry_t* file_entry)
 {
     uint32_t cluster_size = meta->bootsector->sectors_per_cluster * meta->bootsector->bytes_per_sector;
-    uint32_t max_dir_entry_idx = cluster_size / sizeof(fat32_direntry_t) - 1;
+    uint32_t max_dir_entry_per_cluster = cluster_size / sizeof(fat32_direntry_t);
     fat_cluster_t cluster;
     fat_cluster_status_t cluster_status = fat32_get_cluster_info(meta, iter->current_cluster, &cluster);
     if(!(cluster_status == FAT_CLUSTER_EOC || cluster_status == FAT_CLUSTER_USED)) {
@@ -310,122 +310,125 @@ fat_iterate_dir_status_t fat32_iterate_dir(block_storage_t* storage, fat32_meta_
         iter->current_dir_entry_idx = 0;
         iter->lfn_entry_buffered = 0;
     }
-    if(cluster_status != FAT_CLUSTER_USED && iter->current_dir_entry_idx >= max_dir_entry_idx) {
-        return FAT_DIR_ITER_NO_MORE_ENTRY;
-    }
-    if(iter->current_dir_entry_idx >= max_dir_entry_idx) {
-        fat_cluster_t next_cluster;
-        fat_cluster_status_t next_cluster_status = fat32_get_cluster_info(meta, cluster.next, &next_cluster);
-        if(!(next_cluster_status == FAT_CLUSTER_EOC || next_cluster_status == FAT_CLUSTER_USED)) {
-            return FAT_DIR_ITER_ERROR;
-        }
-        uint32_t bytes_read = fat32_read_cluster(storage, meta, next_cluster.curr, (uint8_t*) iter->dir_entries);
-        if(bytes_read != cluster_size) {
-            return FAT_DIR_ITER_ERROR;
-        }
-        iter->current_dir_entry_idx = 0;
-        iter->lfn_entry_buffered = 0;
-        iter->current_cluster = next_cluster.curr;
-    }
 
-    fat32_direntry_t* entry = &iter->dir_entries[iter->current_dir_entry_idx];
-    // Algo Ref: https://wiki.osdev.org/FAT#Reading_Directories
-    if(entry->short_entry.nameext[0] == 0) {
-        // 1. If the first byte of the entry is equal to 0 then there are no more files/directories in this directory. FirstByte==0, finish.
-        iter->current_dir_entry_idx++;
-        return FAT_DIR_ITER_NO_MORE_ENTRY;
-    }
-    if(entry->short_entry.nameext[0] == 0x2E) {
-        // Entry for either "." or ".."
-        iter->current_dir_entry_idx++;
-        return FAT_DIR_DOT_ENTRY;
-    }
-    if(entry->short_entry.nameext[0] == 0xE5) {
-        // 2. If the first byte of the entry is equal to 0xE5 then the entry is unused. FirstByte==0xE5, goto 8
-        iter->current_dir_entry_idx++;
-        return FAT_DIR_ITER_DELETED;
-    }
-    if(entry->short_entry.attr == FAT_ATTR_LFN){
-        // 3. Is this entry a long file name entry? If the 11'th byte of the entry equals 0x0F, then it is a long file name entry. Otherwise, it is not.
-        // 4. Read the portion of the long filename into a temporary buffer. Goto 8.
-        if((entry->long_entry.seq & 0x40) == 0x40) {
-            // first LFN entry
-            
-            // if some entries are already buffered, they will be overritten
-            iter->lfn_checksum = entry->long_entry.csum;
-            memset(file_entry->filename, 0, sizeof(file_entry->filename));
-            void* end_of_filename = ((void*) file_entry->filename) + sizeof(file_entry->filename);
-            memmove(end_of_filename-=sizeof(entry->long_entry.name3), entry->long_entry.name3, sizeof(entry->long_entry.name3));
-            memmove(end_of_filename-=sizeof(entry->long_entry.name2), entry->long_entry.name2, sizeof(entry->long_entry.name2));
-            memmove(end_of_filename-=sizeof(entry->long_entry.name1), entry->long_entry.name1, sizeof(entry->long_entry.name1));
-            file_entry->dir_entry_cluster_start = iter->current_cluster;
-            file_entry->dir_entry_idx_start = iter->current_dir_entry_idx;
-            iter->lfn_entry_buffered = 1;
-            iter->current_dir_entry_idx++;
-            return fat32_iterate_dir(storage, meta, iter, file_entry);
-		} else if(iter->lfn_checksum != entry->long_entry.csum) {
-            // discard LFN if checksum doesn't match the last checksum
-            iter->lfn_entry_buffered = 0;
-            iter->lfn_checksum = 0;
-            memset(file_entry->filename, 0, sizeof(file_entry->filename));
-            iter->current_dir_entry_idx++;
-            return fat32_iterate_dir(storage, meta, iter, file_entry);
-        } else {
-            // not first LFN and checksum is consistent
-            void* offset = ((void*) file_entry->filename) + sizeof(file_entry->filename) - FAT32_USC2_FILE_NAME_LEN_PER_LFN*2*(iter->lfn_entry_buffered);
-            memmove(offset-=sizeof(entry->long_entry.name3), entry->long_entry.name3, sizeof(entry->long_entry.name3));
-            memmove(offset-=sizeof(entry->long_entry.name2), entry->long_entry.name2, sizeof(entry->long_entry.name2));
-            memmove(offset-=sizeof(entry->long_entry.name1), entry->long_entry.name1, sizeof(entry->long_entry.name1));
-            iter->lfn_entry_buffered++;
-            iter->current_dir_entry_idx++;
-            return fat32_iterate_dir(storage, meta, iter, file_entry);
+    while(1)
+    {
+        if(iter->current_dir_entry_idx >= max_dir_entry_per_cluster) {
+            if(cluster_status != FAT_CLUSTER_USED) {
+                return FAT_DIR_ITER_NO_MORE_ENTRY;
+            }
+            cluster_status = fat32_get_cluster_info(meta, cluster.next, &cluster);
+            if(!(cluster_status == FAT_CLUSTER_EOC || cluster_status == FAT_CLUSTER_USED)) {
+                return FAT_DIR_ITER_ERROR;
+            }
+            uint32_t bytes_read = fat32_read_cluster(storage, meta, cluster.curr, (uint8_t*) iter->dir_entries);
+            if(bytes_read != cluster_size) {
+                return FAT_DIR_ITER_ERROR;
+            }
+            iter->current_dir_entry_idx = 0;
+            iter->current_cluster = cluster.curr;
         }
-    } else {
-        // 5. Parse the data for this entry using the table from further up on this page. It would be a good idea to save the data for later. Possibly in a virtual file system structure. goto 6
-        file_entry->direntry = iter->dir_entries[iter->current_dir_entry_idx].short_entry;
-        file_entry->dir_entry_cluster_end = iter->current_cluster;
-        file_entry->dir_entry_idx_end = iter->current_dir_entry_idx;
-        // 6. Is there a long file name in the temporary buffer? Yes, goto 7. No, goto 8
-        // 7. Apply the long file name to the entry that you just read and clear the temporary buffer. goto 8
-        if(iter->lfn_entry_buffered > 0 && iter->lfn_checksum == lfn_checksum(file_entry->direntry.nameext)) {
-            // We do not support USC-2 UNICODE character, any non US-ASCII character will be replaced by '_'
-            // as per Microsoft's documentation "Microsoft Extensible Firmware Initiative FAT32 File System Specification" 
-            // https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc
-            uint32_t lfn_name_byte_len =  FAT32_USC2_FILE_NAME_LEN_PER_LFN*2*iter->lfn_entry_buffered;
-            uint8_t* start_of_filename = &file_entry->filename[sizeof(file_entry->filename)] - lfn_name_byte_len;
-            for(uint32_t i=0; i<lfn_name_byte_len/2; i++) {
-                uint8_t usc2_first = start_of_filename[i*2];
-                uint8_t usc2_second = start_of_filename[i*2+1];
-                // Unicode (and UCS-2) is compatible with 7-bit ASCII / US-ASCII
-                if(usc2_first > 127 || usc2_second != 0) {
-                    // if not US-ASCII
-                    file_entry->filename[i] = '_';
-                } else {
-                    file_entry->filename[i] = usc2_first;
+
+        fat32_direntry_t* entry = &iter->dir_entries[iter->current_dir_entry_idx];
+        // Algo Ref: https://wiki.osdev.org/FAT#Reading_Directories
+        if(entry->short_entry.nameext[0] == 0) {
+            // If the first byte of the entry is equal to 0 then there are no more files/directories in this directory. FirstByte==0, finish.
+            iter->current_dir_entry_idx++;
+            return FAT_DIR_ITER_NO_MORE_ENTRY;
+        }
+        if(entry->short_entry.attr == FAT_ATTR_LFN){
+            // Is this entry a long file name entry? If the 11'th byte of the entry equals 0x0F, then it is a long file name entry. Otherwise, it is not.
+            // Read the portion of the long filename into a temporary buffer. Goto 8.
+            if((entry->long_entry.seq & 0x40) == 0x40) {
+                // first LFN entry
+                
+                // if some entries are already buffered, they will be overritten
+                iter->lfn_checksum = entry->long_entry.csum;
+                memset(file_entry->filename, 0, sizeof(file_entry->filename));
+                void* end_of_filename = ((void*) file_entry->filename) + sizeof(file_entry->filename);
+                memmove(end_of_filename-=sizeof(entry->long_entry.name3), entry->long_entry.name3, sizeof(entry->long_entry.name3));
+                memmove(end_of_filename-=sizeof(entry->long_entry.name2), entry->long_entry.name2, sizeof(entry->long_entry.name2));
+                memmove(end_of_filename-=sizeof(entry->long_entry.name1), entry->long_entry.name1, sizeof(entry->long_entry.name1));
+                file_entry->dir_entry_cluster_start = iter->current_cluster;
+                file_entry->dir_entry_idx_start = iter->current_dir_entry_idx;
+                iter->lfn_entry_buffered = 1;
+                iter->current_dir_entry_idx++;
+                continue;
+            } else if(iter->lfn_checksum != entry->long_entry.csum) {
+                // skip this LFN entry if checksum doesn't match the last checksum
+                iter->current_dir_entry_idx++;
+                continue;
+            } else {
+                // not first LFN and checksum is consistent
+                void* offset = ((void*) file_entry->filename) + sizeof(file_entry->filename) - FAT32_USC2_FILE_NAME_LEN_PER_LFN*2*(iter->lfn_entry_buffered);
+                memmove(offset-=sizeof(entry->long_entry.name3), entry->long_entry.name3, sizeof(entry->long_entry.name3));
+                memmove(offset-=sizeof(entry->long_entry.name2), entry->long_entry.name2, sizeof(entry->long_entry.name2));
+                memmove(offset-=sizeof(entry->long_entry.name1), entry->long_entry.name1, sizeof(entry->long_entry.name1));
+                iter->lfn_entry_buffered++;
+                iter->current_dir_entry_idx++;
+                continue;
+            }
+        } else {
+            // Parse the data for this entry using the table from further up on this page. It would be a good idea to save the data for later. Possibly in a virtual file system structure. goto 6
+            file_entry->direntry = iter->dir_entries[iter->current_dir_entry_idx].short_entry;
+            file_entry->dir_entry_cluster_end = iter->current_cluster;
+            file_entry->dir_entry_idx_end = iter->current_dir_entry_idx;
+            // Is there a long file name in the temporary buffer? Yes, goto 7. No, goto 8
+            // Apply the long file name to the entry that you just read and clear the temporary buffer. goto 8
+            if(iter->lfn_entry_buffered > 0 && iter->lfn_checksum == lfn_checksum(file_entry->direntry.nameext)) {
+                // We do not support USC-2 UNICODE character, any non US-ASCII character will be replaced by '_'
+                // as per Microsoft's documentation "Microsoft Extensible Firmware Initiative FAT32 File System Specification" 
+                // https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc
+                uint32_t lfn_name_byte_len =  FAT32_USC2_FILE_NAME_LEN_PER_LFN*2*iter->lfn_entry_buffered;
+                uint8_t* start_of_filename = &file_entry->filename[sizeof(file_entry->filename)] - lfn_name_byte_len;
+                for(uint32_t i=0; i<lfn_name_byte_len/2; i++) {
+                    uint8_t usc2_first = start_of_filename[i*2];
+                    uint8_t usc2_second = start_of_filename[i*2+1];
+                    // Unicode (and UCS-2) is compatible with 7-bit ASCII / US-ASCII
+                    if(usc2_first > 127 || usc2_second != 0) {
+                        // if not US-ASCII
+                        file_entry->filename[i] = '_';
+                    } else {
+                        file_entry->filename[i] = usc2_first;
+                    }
+                }
+                file_entry->filename[lfn_name_byte_len] = 0;
+                trim_space((char*)file_entry->filename);
+            } else {
+                // if not LFN buffered, use the 8.3 short name
+                file_entry->dir_entry_idx_start = iter->current_dir_entry_idx;
+                file_entry->dir_entry_cluster_start = iter->current_cluster;
+                memmove(file_entry->filename, file_entry->direntry.name, sizeof( file_entry->direntry.name));
+                file_entry->filename[sizeof(file_entry->direntry.name)] = 0;
+                trim_space((char*)file_entry->filename);
+                uint32_t name_len = strlen((char*)file_entry->filename);
+                file_entry->filename[name_len] = '.';
+                memmove(&file_entry->filename[name_len+1],  file_entry->direntry.ext, sizeof(file_entry->direntry.ext));
+                file_entry->filename[name_len+1+sizeof(file_entry->direntry.ext)] = 0;
+                trim_space((char*)file_entry->filename);
+                if(strlen((char*)file_entry->filename)==name_len+1){
+                    // if no extension, remove the '.' added
+                    file_entry->filename[name_len] = 0;
                 }
             }
-            file_entry->filename[lfn_name_byte_len] = 0;
-            trim_space((char*)file_entry->filename);
-        } else {
-            // if not LFN buffered, use the 8.3 short name
-            file_entry->dir_entry_idx_start = iter->current_dir_entry_idx;
-            file_entry->dir_entry_cluster_start = iter->current_cluster;
-            memmove(file_entry->filename, file_entry->direntry.name, sizeof( file_entry->direntry.name));
-            file_entry->filename[sizeof(file_entry->direntry.name)] = 0;
-            trim_space((char*)file_entry->filename);
-            uint32_t name_len = strlen((char*)file_entry->filename);
-            file_entry->filename[name_len] = '.';
-            memmove(&file_entry->filename[name_len+1],  file_entry->direntry.ext, sizeof(file_entry->direntry.ext));
-            file_entry->filename[name_len+1+sizeof(file_entry->direntry.ext)] = 0;
-            trim_space((char*)file_entry->filename);
-            if(strlen((char*)file_entry->filename)==name_len+1){
-                file_entry->filename[name_len] = 0;
+            
+            iter->current_dir_entry_idx++;
+
+            if(entry->short_entry.nameext[0] == 0x2E) {
+                // Entry for either "." or ".."
+                return FAT_DIR_DOT_ENTRY;
             }
+            if(entry->short_entry.nameext[0] == 0xE5) {
+                // If the first byte of the entry is equal to 0xE5 then the entry is unused. FirstByte==0xE5, goto 8
+                return FAT_DIR_ITER_DELETED;
+            }
+
+            // Increment pointers and/or counters and check the next entry. (goto number 1)
+            return FAT_DIR_ITER_VALID_ENTRY;
         }
-        // 8. Increment pointers and/or counters and check the next entry. (goto number 1)
-        iter->current_dir_entry_idx++;
-        return FAT_DIR_ITER_VALID_ENTRY;
     }
+
+
 }
 
 static void fat_free_dir_iterator(fat_dir_iterator_t* iter)

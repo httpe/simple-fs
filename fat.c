@@ -863,6 +863,85 @@ static int32_t fat32_trim_directory(uint32_t start_cluster_number_to_trim)
 
 }
 
+static int32_t fat32_rm_file_entry(fat32_file_entry_t* file_entry)
+{
+
+    uint32_t cluster_byte_size = global_fat_meta.bootsector->bytes_per_sector*global_fat_meta.bootsector->sectors_per_cluster;
+    fat32_direntry_t* dir =  malloc(cluster_byte_size);
+
+    uint32_t max_dir_entry_idx = cluster_byte_size / sizeof(fat32_direntry_t) - 1;
+
+    fat_cluster_t cluster;
+    fat_cluster_status_t cluster_status = fat32_get_cluster_info(&global_fat_meta, file_entry->dir_entry_cluster_end, &cluster);
+    uint32_t idx, idx_start, idx_end;
+
+    while(1) {
+        uint32_t bytes_read = fat32_read_cluster(global_storage, &global_fat_meta, cluster.curr, (uint8_t*) dir);
+        if(bytes_read != cluster_byte_size) {
+            return -EIO;
+        }
+        if(cluster.curr == file_entry->dir_entry_cluster_start) {
+            idx_start = file_entry->dir_entry_idx_start;
+        } else {
+            idx_start = 0;
+        }
+        if(cluster.curr == file_entry->dir_entry_cluster_end) {
+            idx_end = file_entry->dir_entry_idx_end;
+        } else {
+            idx_end = max_dir_entry_idx;
+        }
+        for(idx = idx_start; idx <= idx_end; idx++) {
+            // Set dir entry as deleted
+            dir[idx].short_entry.name[0] = 0xE5;
+        }
+        uint32_t bytes_written = fat32_write_cluster(global_storage, &global_fat_meta, cluster.curr, (uint8_t*) dir);
+        if(bytes_written != cluster_byte_size) {
+            return -EIO;
+        }
+        if(cluster.curr == file_entry->dir_entry_cluster_start) {
+            break;
+        } else {
+             cluster_status = fat32_get_cluster_info(&global_fat_meta, cluster.prev, &cluster);
+             assert(cluster_status == FAT_CLUSTER_USED);
+        }
+    }
+
+    // Free data clusters
+    uint32_t file_content_cluster_number = file_entry->direntry.cluster_lo + (file_entry->direntry.cluster_hi << 16);
+    cluster_status = fat32_get_cluster_info(&global_fat_meta, file_content_cluster_number, &cluster);
+    if(cluster_status == FAT_CLUSTER_EOC || FAT_CLUSTER_USED) {
+        int32_t cluster_freed = fat32_free_cluster(file_content_cluster_number);
+        int32_t cluster_occupied;
+        if(file_entry->direntry.size == 0) {
+            cluster_occupied = 1;
+        } else {
+            cluster_occupied = (file_entry->direntry.size - 1)/ cluster_byte_size + 1;
+        }
+        if(cluster_freed != cluster_occupied) {
+            return -EIO;
+        }
+    }
+
+    fat_cluster_t end_cluster;
+    fat_cluster_status_t end_cluster_status = fat32_get_cluster_info(&global_fat_meta, file_entry->dir_entry_cluster_end, &end_cluster);
+    if(cluster.prev != 0 && end_cluster_status == FAT_CLUSTER_EOC) {
+        // if this cluster is not the only cluster for the dir and it is the last cluster
+        // check if all entries are unused so we can free this cluster
+        int32_t cluster_freed = fat32_trim_directory(end_cluster.curr);
+        if(cluster_freed < 0) {
+            free(dir);
+            return -EIO;
+        } else if(cluster_freed > 0) {
+            // the cluster is freed, no need to write back the dir buffer
+            free(dir);
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
+
 static int fs_unlink(const char *path)
 {
 
@@ -886,80 +965,61 @@ static int fs_unlink(const char *path)
         return -EISDIR;
     }
 
-    uint32_t cluster_byte_size = global_fat_meta.bootsector->bytes_per_sector*global_fat_meta.bootsector->sectors_per_cluster;
-    fat32_direntry_t* dir =  malloc(cluster_byte_size);
+    return fat32_rm_file_entry(&file_entry);
+}
 
-    uint32_t max_dir_entry_idx = cluster_byte_size / sizeof(fat32_direntry_t) - 1;
+static int fs_rmdir(const char *path)
+{
+    fat32_file_entry_t file_entry = {0};
+    fat_resolve_path_status_t status = fat32_resolve_path(path, &file_entry);
 
-    fat_cluster_t cluster;
-    fat_cluster_status_t cluster_status = fat32_get_cluster_info(&global_fat_meta, file_entry.dir_entry_cluster_end, &cluster);
-    uint32_t idx, idx_start, idx_end;
+    if(status == FAT_PATH_RESOLVE_ERROR) {
+        return -EIO;
+    }
+    if(status == FAT_PATH_RESOLVE_NOT_FOUND || status == FAT_PATH_RESOLVE_INVALID_PATH) {
+        return -ENOENT;
+    }
+    if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
+        // not allow to unlink/delete root dir
+        return -EPERM;
+    }
+    assert(status == FAT_PATH_RESOLVE_FOUND);
+
+    if(!HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
+        // Not allow to perform rmdir on file
+        return -ENOTDIR;
+    }
+
+    fat_dir_iterator_t iter = {0};
+    iter.current_cluster = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
+    fat32_file_entry_t file_in_dir = {0};
 
     while(1) {
-        uint32_t bytes_read = fat32_read_cluster(global_storage, &global_fat_meta, cluster.curr, (uint8_t*) dir);
-        if(bytes_read != cluster_byte_size) {
+        fat_iterate_dir_status_t iter_status = fat32_iterate_dir(global_storage, &global_fat_meta,&iter,&file_in_dir);
+        if(iter_status == FAT_DIR_ITER_ERROR) {
+            // Any error will discard all info we got
+            fat_free_dir_iterator(&iter);
             return -EIO;
         }
-        if(cluster.curr == file_entry.dir_entry_cluster_start) {
-            idx_start = file_entry.dir_entry_idx_start;
-        } else {
-            idx_start = 0;
+        if(iter_status == FAT_DIR_ITER_DELETED || iter_status == FAT_DIR_DOT_ENTRY) {
+            continue;
         }
-        if(cluster.curr == file_entry.dir_entry_cluster_end) {
-            idx_end = file_entry.dir_entry_idx_end;
-        } else {
-            idx_end = max_dir_entry_idx;
-        }
-        for(idx = idx_start; idx <= idx_end; idx++) {
-            // Set dir entry as deleted
-            dir[idx].short_entry.name[0] = 0xE5;
-        }
-        uint32_t bytes_written = fat32_write_cluster(global_storage, &global_fat_meta, cluster.curr, (uint8_t*) dir);
-        if(bytes_written != cluster_byte_size) {
-            return -EIO;
-        }
-        if(cluster.curr == file_entry.dir_entry_cluster_start) {
+        if(iter_status == FAT_DIR_ITER_NO_MORE_ENTRY) {
+            // Dir is empty
+            fat_free_dir_iterator(&iter);
             break;
-        } else {
-             cluster_status = fat32_get_cluster_info(&global_fat_meta, cluster.prev, &cluster);
-             assert(cluster_status == FAT_CLUSTER_USED);
         }
+        assert(iter_status == FAT_DIR_ITER_VALID_ENTRY);
+        if(HAS_ATTR(file_in_dir.direntry.attr, FAT_ATTR_VOLUME_ID)) {
+            // Skip Volume label entry when listing directory
+            continue;
+        }
+        // Dir is not empty
+        fat_free_dir_iterator(&iter);
+        return -EPERM;
     }
 
-    // Free data clusters
-    uint32_t file_content_cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
-    cluster_status = fat32_get_cluster_info(&global_fat_meta, file_content_cluster_number, &cluster);
-    if(cluster_status == FAT_CLUSTER_EOC || FAT_CLUSTER_USED) {
-        int32_t cluster_freed = fat32_free_cluster(file_content_cluster_number);
-        int32_t cluster_occupied;
-        if(file_entry.direntry.size == 0) {
-            cluster_occupied = 1;
-        } else {
-            cluster_occupied = (file_entry.direntry.size - 1)/ cluster_byte_size + 1;
-        }
-        if(cluster_freed != cluster_occupied) {
-            return -EIO;
-        }
-    }
-
-    fat_cluster_t end_cluster;
-    fat_cluster_status_t end_cluster_status = fat32_get_cluster_info(&global_fat_meta, file_entry.dir_entry_cluster_end, &end_cluster);
-    if(cluster.prev != 0 && end_cluster_status == FAT_CLUSTER_EOC) {
-        // if this cluster is not the only cluster for the dir and it is the last cluster
-        // check if all entries are unused so we can free this cluster
-        int32_t cluster_freed = fat32_trim_directory(end_cluster.curr);
-        if(cluster_freed < 0) {
-            free(dir);
-            return -EIO;
-        } else if(cluster_freed > 0) {
-            // the cluster is freed, no need to write back the dir buffer
-            free(dir);
-            return 0;
-        }
-    }
-
-    return 0;
-
+    return fat32_rm_file_entry(&file_entry);
 }
 
 //Ref: https://libfuse.github.io/doxygen/structfuse__operations.html
@@ -969,6 +1029,7 @@ static const struct fuse_operations fs_oper = {
 	.readdir	= fs_readdir,
     .read       = fs_read,
     .unlink     = fs_unlink,
+    .rmdir      = fs_rmdir,
 };
 
 static void show_help(const char *progname)

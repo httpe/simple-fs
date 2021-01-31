@@ -735,6 +735,23 @@ void fat32_modify_fat_cache(uint32_t* fat, fat_cluster_stripped_t* linked_fat, u
     return;
 }
 
+int32_t fat32_write_fs_info(block_storage_t* storage, fat32_meta_t* meta, fat32_fsinfo_t* new_fs_info)
+{
+    uint32_t sectors_to_read = 1 + (sizeof(fat32_fsinfo_t) - 1) / storage->block_size;
+    uint32_t bytes_written = storage->write_blocks(storage, meta->bootsector->fs_info_sector, sectors_to_read, (uint8_t*) new_fs_info);
+    if(bytes_written != storage->block_size*sectors_to_read) {
+        // Try restore original FS Info
+        bytes_written = storage->write_blocks(storage, meta->bootsector->fs_info_sector, sectors_to_read, (uint8_t*) meta->fs_info);
+        if(bytes_written != storage->block_size*sectors_to_read) {
+            // If recover attempt failed, panic
+            assert(bytes_written != storage->block_size*sectors_to_read);
+        }
+        return -1;
+    } else {
+        return 0;
+    }
+}
+
 int32_t fat32_write_fat(block_storage_t* storage, fat32_meta_t* meta, uint32_t* new_fat)
 {
     uint32_t fat_byte_size = meta->bootsector->table_sector_size_32*meta->bootsector->bytes_per_sector;
@@ -800,6 +817,14 @@ uint32_t fat32_free_cluster(block_storage_t* storage, fat32_meta_t* meta, uint32
         free(new_fat);
         memmove(meta->linked_fat, new_linked_fat, linked_fat_size);
         free(new_linked_fat);
+
+        fat32_fsinfo_t* new_fs_info = malloc(sizeof(fat32_fsinfo_t));
+        memmove(new_fs_info, meta->fs_info, sizeof(fat32_fsinfo_t));
+        new_fs_info->free_cluster_count += cluster_freed;
+        res = fat32_write_fs_info(storage, meta, new_fs_info);
+        meta->fs_info->free_cluster_count += cluster_freed;
+        free(new_fs_info);
+        // FS info is for information only, so even if the I/O failed, we still return success status
         return cluster_freed;
     } else {
         free(new_fat);

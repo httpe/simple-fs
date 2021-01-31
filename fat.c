@@ -863,20 +863,20 @@ static int32_t fat32_trim_directory(uint32_t start_cluster_number_to_trim)
 
 }
 
-static int32_t fat32_rm_file_entry(fat32_file_entry_t* file_entry)
+static int32_t fat32_rm_file_entry(block_storage_t* storage, fat32_meta_t* meta,  fat32_file_entry_t* file_entry)
 {
 
-    uint32_t cluster_byte_size = global_fat_meta.bootsector->bytes_per_sector*global_fat_meta.bootsector->sectors_per_cluster;
+    uint32_t cluster_byte_size = meta->bootsector->bytes_per_sector*meta->bootsector->sectors_per_cluster;
     fat32_direntry_t* dir =  malloc(cluster_byte_size);
 
     uint32_t max_dir_entry_idx = cluster_byte_size / sizeof(fat32_direntry_t) - 1;
 
     fat_cluster_t cluster;
-    fat_cluster_status_t cluster_status = fat32_get_cluster_info(&global_fat_meta, file_entry->dir_entry_cluster_end, &cluster);
+    fat_cluster_status_t cluster_status = fat32_get_cluster_info(meta, file_entry->dir_entry_cluster_end, &cluster);
     uint32_t idx, idx_start, idx_end;
 
     while(1) {
-        uint32_t bytes_read = fat32_read_cluster(global_storage, &global_fat_meta, cluster.curr, (uint8_t*) dir);
+        uint32_t bytes_read = fat32_read_cluster(storage, meta, cluster.curr, (uint8_t*) dir);
         if(bytes_read != cluster_byte_size) {
             return -EIO;
         }
@@ -894,21 +894,21 @@ static int32_t fat32_rm_file_entry(fat32_file_entry_t* file_entry)
             // Set dir entry as deleted
             dir[idx].short_entry.name[0] = 0xE5;
         }
-        uint32_t bytes_written = fat32_write_cluster(global_storage, &global_fat_meta, cluster.curr, (uint8_t*) dir);
+        uint32_t bytes_written = fat32_write_cluster(storage, meta, cluster.curr, (uint8_t*) dir);
         if(bytes_written != cluster_byte_size) {
             return -EIO;
         }
         if(cluster.curr == file_entry->dir_entry_cluster_start) {
             break;
         } else {
-             cluster_status = fat32_get_cluster_info(&global_fat_meta, cluster.prev, &cluster);
+             cluster_status = fat32_get_cluster_info(meta, cluster.prev, &cluster);
              assert(cluster_status == FAT_CLUSTER_USED);
         }
     }
 
     // Free data clusters
     uint32_t file_content_cluster_number = file_entry->direntry.cluster_lo + (file_entry->direntry.cluster_hi << 16);
-    cluster_status = fat32_get_cluster_info(&global_fat_meta, file_content_cluster_number, &cluster);
+    cluster_status = fat32_get_cluster_info(meta, file_content_cluster_number, &cluster);
     if(cluster_status == FAT_CLUSTER_EOC || FAT_CLUSTER_USED) {
         int32_t cluster_freed = fat32_free_cluster(file_content_cluster_number);
         int32_t cluster_occupied;
@@ -923,7 +923,7 @@ static int32_t fat32_rm_file_entry(fat32_file_entry_t* file_entry)
     }
 
     fat_cluster_t end_cluster;
-    fat_cluster_status_t end_cluster_status = fat32_get_cluster_info(&global_fat_meta, file_entry->dir_entry_cluster_end, &end_cluster);
+    fat_cluster_status_t end_cluster_status = fat32_get_cluster_info(meta, file_entry->dir_entry_cluster_end, &end_cluster);
     if(cluster.prev != 0 && end_cluster_status == FAT_CLUSTER_EOC) {
         // if this cluster is not the only cluster for the dir and it is the last cluster
         // check if all entries are unused so we can free this cluster
@@ -965,7 +965,7 @@ static int fs_unlink(const char *path)
         return -EISDIR;
     }
 
-    return fat32_rm_file_entry(&file_entry);
+    return fat32_rm_file_entry(global_storage, &global_fat_meta, &file_entry);
 }
 
 static int fs_rmdir(const char *path)
@@ -1019,8 +1019,9 @@ static int fs_rmdir(const char *path)
         return -EPERM;
     }
 
-    return fat32_rm_file_entry(&file_entry);
+    return fat32_rm_file_entry(global_storage, &global_fat_meta, &file_entry);
 }
+
 
 //Ref: https://libfuse.github.io/doxygen/structfuse__operations.html
 static const struct fuse_operations fs_oper = {

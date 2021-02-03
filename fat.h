@@ -85,9 +85,8 @@ typedef struct fat32_file_entry {
     fat32_direntry_short_t direntry;
     uint8_t filename[FAT32_LONG_NAME_MAX_LEN_USC2*2+1];// +1: space for null terminator
 	uint32_t dir_entry_cluster_start;
-	uint32_t dir_entry_cluster_end;
 	uint32_t dir_entry_idx_start;
-	uint32_t dir_entry_idx_end;
+	uint32_t dir_entry_count;
 } fat32_file_entry_t;
 
 
@@ -151,6 +150,7 @@ typedef enum fat_iterate_dir_status {
 	FAT_DIR_DOT_ENTRY,
 	FAT_DIR_ITER_DELETED,
 	FAT_DIR_ITER_NO_MORE_ENTRY,
+	FAT_DIR_ITER_FREE_ENTRY,
 	FAT_DIR_ITER_ERROR
 } fat_iterate_dir_status_t;
 

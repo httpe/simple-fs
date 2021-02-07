@@ -1769,6 +1769,43 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
     return 0;
 }
 
+static int fs_rename(const char *from, const char *to, unsigned int flags)
+{
+    (void) flags;
+    
+    fat32_file_entry_t file_entry = {0};
+    fat_resolve_path_status_t status = fat32_resolve_path(global_storage, &global_fat_meta, from, &file_entry);
+
+    if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
+        return -EPERM;
+    }
+    if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
+        return -ENOENT;
+    }
+    if(status == FAT_PATH_RESOLVE_ERROR) {
+        return -EIO;
+    }
+    if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
+        return -ENOENT;
+    }
+
+    assert(status == FAT_PATH_RESOLVE_FOUND);
+
+    int32_t create_res = fat32_create_new(to, file_entry.direntry);
+    if(create_res < 0) {
+        return create_res;
+    }
+
+    // Remove old dir entry
+    fat_dir_iterator_t iter = {.first_cluster = file_entry.dir_cluster};
+    int32_t dir_res = fat32_rm_file_entry(global_storage, &global_fat_meta, &iter, &file_entry);
+    if(dir_res<0) {
+        return dir_res;
+    }
+
+	return 0;
+}
+
 static int fs_open(const char *path, struct fuse_file_info *fi)
 {
     (void) fi;
@@ -1821,6 +1858,7 @@ static const struct fuse_operations fs_oper = {
     .open       = fs_open,
     .release    = fs_release,
     .truncate   = fs_truncate,
+    .rename     = fs_rename,
 };
 
 static void show_help(const char *progname)

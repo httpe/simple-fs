@@ -1631,6 +1631,43 @@ static int fs_write(const char *path, const char *buf, size_t size,
     return size;
 }
 
+static int fs_open(const char *path, struct fuse_file_info *fi)
+{
+    (void) fi;
+
+    fat32_file_entry_t file_entry = {0};
+    fat_resolve_path_status_t status = fat32_resolve_path(global_storage, &global_fat_meta, path, &file_entry);
+
+    if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
+        return -EISDIR;
+    }
+    if(status == FAT_PATH_RESOLVE_INVALID_PATH || status == FAT_PATH_RESOLVE_NOT_FOUND) {
+        return -ENOENT;
+    }
+    if(status == FAT_PATH_RESOLVE_ERROR) {
+        return -EIO;
+    }
+    assert(status == FAT_PATH_RESOLVE_FOUND);
+
+    if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
+        return -EISDIR;
+    }
+
+    // Do nothing
+
+	return 0;
+}
+
+static int fs_release(const char *path, struct fuse_file_info *fi)
+{
+	(void) path;
+    // Do nothing
+    
+	return 0;
+}
+
+
+
 //Ref: https://libfuse.github.io/doxygen/structfuse__operations.html
 static const struct fuse_operations fs_oper = {
 	.init       = fs_init,
@@ -1642,6 +1679,8 @@ static const struct fuse_operations fs_oper = {
     .mknod      = fs_mknod,
     .mkdir      = fs_mkdir,
     .write      = fs_write,
+    .open       = fs_open,
+    .release    = fs_release,
 };
 
 static void show_help(const char *progname)

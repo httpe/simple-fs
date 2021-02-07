@@ -402,6 +402,34 @@ static uint32_t fat32_eoc_cluster_number(fat32_meta_t* meta, uint32_t cluster_nu
     return cluster.curr;
 }
 
+// Get cluster number by indexing into a cluster chain, negative index means counting from EOC
+static uint32_t fat32_index_cluster_chain(fat32_meta_t* meta, uint32_t cluster_number, int32_t index)
+{
+    if(cluster_number == 0) {
+        return 0;
+    }
+
+    if(index < 0) {
+        uint32_t cluster_count = count_clusters(meta, cluster_number);
+        index = cluster_count + index;
+    }
+    if(index < 0) {
+        return 0;
+    }
+    if(index == 0) {
+        return cluster_number;
+    }
+    fat_cluster_t cluster = {.next = cluster_number};
+    while(index > 0) {
+        if(cluster.next == 0) {
+            return 0;
+        }
+        fat32_get_cluster_info(meta, cluster.next, &cluster);
+        index--;
+    }
+    return cluster.next;
+}
+
 // Can only be used to seek existing clusters
 static uint32_t fat32_cluster_by_offset(fat32_meta_t* meta, uint32_t starting_cluster_number, uint32_t byte_offset)
 {
@@ -1526,6 +1554,47 @@ static int fs_rmdir(const char *path)
     return 0;
 }
 
+
+static int32_t fat32_write_to_offset(block_storage_t* storage, fat32_meta_t* meta, uint32_t first_cluster, uint32_t offset, uint32_t size, const uint8_t* buff)
+{
+    uint32_t bytes_per_cluster = meta->bootsector->sectors_per_cluster*meta->bootsector->bytes_per_sector;
+    uint32_t cluster_start_writing = fat32_cluster_by_offset(meta, first_cluster, offset);
+    uint32_t clusters_to_write = 1 + ((offset + size - 1) / bytes_per_cluster) - (offset / bytes_per_cluster);
+    fat_cluster_t cluster = {.next = cluster_start_writing};
+
+    uint8_t* cluster_buff = malloc(bytes_per_cluster);
+    uint32_t start_offset_in_cluster, end_offset_in_cluster;
+    for(uint32_t i=0; i < clusters_to_write; i++) {
+        assert(cluster.next != 0);
+        fat_cluster_status_t cluster_status = fat32_get_cluster_info(meta, cluster.next, &cluster);
+        assert(cluster_status == FAT_CLUSTER_USED || cluster_status == FAT_CLUSTER_EOC);
+        int64_t read_res = fat32_read_clusters(storage, meta, cluster.curr, 1, cluster_buff);
+        if(read_res < 0) {
+            free(cluster_buff);
+            return read_res;
+        }
+        if(i == 0) {
+            start_offset_in_cluster = offset % bytes_per_cluster;
+        } else {
+            start_offset_in_cluster = 0;
+        }
+        if(i == clusters_to_write - 1) {
+            end_offset_in_cluster = (offset + size) % bytes_per_cluster;
+        } else {
+            end_offset_in_cluster = bytes_per_cluster - 1;
+        }
+        memmove(cluster_buff + start_offset_in_cluster, buff, end_offset_in_cluster - start_offset_in_cluster + 1);
+        int64_t write_res = fat32_write_clusters(storage, meta, cluster.curr, 1, cluster_buff);
+        if(write_res < 0) {
+            free(cluster_buff);
+            return write_res;
+        }
+        buff += end_offset_in_cluster - start_offset_in_cluster;
+    }
+    free(cluster_buff);
+    return 0;
+}
+
 static int fs_write(const char *path, const char *buf, size_t size,
 		     off_t offset, struct fuse_file_info *fi)
 {
@@ -1597,38 +1666,107 @@ static int fs_write(const char *path, const char *buf, size_t size,
         return 0;
     }
 
-    uint32_t cluster_start_writing = fat32_cluster_by_offset(&global_fat_meta, first_cluster, offset);
-    uint32_t clusters_to_write = 1 + ((offset + size - 1) / bytes_per_cluster) - (offset / bytes_per_cluster);
-    fat_cluster_t cluster = {.next = cluster_start_writing};
+    int32_t write_res = fat32_write_to_offset(global_storage, &global_fat_meta, first_cluster, offset, size, (uint8_t*) buf);
+    if(write_res < 0) {
+        return write_res;
+    }
 
-    uint8_t* cluster_buff = malloc(bytes_per_cluster);
-    uint32_t start_offset_in_cluster, end_offset_in_cluster;
-    for(uint32_t i=0; i < clusters_to_write; i++) {
-        assert(cluster.next != 0);
-        fat_cluster_status_t cluster_status = fat32_get_cluster_info(&global_fat_meta, cluster.next, &cluster);
-        assert(cluster_status == FAT_CLUSTER_USED || cluster_status == FAT_CLUSTER_EOC);
-        int64_t read_res = fat32_read_clusters(global_storage, &global_fat_meta, cluster.curr, 1, cluster_buff);
-        if(read_res < 0) {
-            return read_res;
+    return size;
+}
+
+
+static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
+{
+    (void) fi;
+    
+    fat32_file_entry_t file_entry = {0};
+    fat_resolve_path_status_t status = fat32_resolve_path(global_storage, &global_fat_meta, path, &file_entry);
+
+    if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
+        return -EISDIR;
+    }
+    if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
+        return -ENOENT;
+    }
+    if(status == FAT_PATH_RESOLVE_ERROR) {
+        return -EIO;
+    }
+    if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
+        return -ENOENT;
+    }
+
+    assert(status == FAT_PATH_RESOLVE_FOUND);
+
+    if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
+        return -EISDIR;
+    }
+
+    if(size == file_entry.direntry.size) {
+        // Same size, do nothing
+        return 0;
+    }
+
+    uint32_t first_cluster = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
+    uint32_t cluster_count = first_cluster == 0 ? 0 : count_clusters(&global_fat_meta, first_cluster);
+    uint32_t bytes_per_cluster = global_fat_meta.bootsector->sectors_per_cluster*global_fat_meta.bootsector->bytes_per_sector;
+    uint32_t allocated_size = bytes_per_cluster * cluster_count;
+    uint32_t orig_size = file_entry.direntry.size;
+
+    if(size > allocated_size) {
+        uint32_t clusters_to_allocate = (size - allocated_size - 1) / bytes_per_cluster + 1;
+        uint32_t first_allocated_cluster = fat32_allocate_cluster(global_storage, &global_fat_meta, fat32_eoc_cluster_number(&global_fat_meta, first_cluster), clusters_to_allocate);
+        if(first_allocated_cluster == 0) {
+            return -EIO;
         }
-        if(i == 0) {
-            start_offset_in_cluster = offset % bytes_per_cluster;
-        } else {
-            start_offset_in_cluster = 0;
+        if(first_cluster == 0) {
+            first_cluster = first_allocated_cluster;
+            cluster_count += clusters_to_allocate;
+            allocated_size = bytes_per_cluster * cluster_count;
+            file_entry.direntry.cluster_lo = first_allocated_cluster & 0x0000FFFF;
+            file_entry.direntry.cluster_hi = first_allocated_cluster >> 16;
         }
-        if(i == clusters_to_write - 1) {
-            end_offset_in_cluster = (offset + size) % bytes_per_cluster;
-        } else {
-            end_offset_in_cluster = bytes_per_cluster - 1;
+    } else if(allocated_size - size >= bytes_per_cluster){
+        int32_t clusters_to_free = (allocated_size - size) / bytes_per_cluster;
+        uint32_t first_cluster_to_free = fat32_index_cluster_chain(&global_fat_meta, first_cluster, -clusters_to_free);
+        int32_t free_res = fat32_free_cluster(global_storage, &global_fat_meta, first_cluster_to_free, 0);
+        if(free_res < 0) {
+            return free_res;
         }
-        memmove(cluster_buff, buf, end_offset_in_cluster - start_offset_in_cluster + 1);
-        int64_t write_res = fat32_write_clusters(global_storage, &global_fat_meta, cluster.curr, 1, cluster_buff);
+        cluster_count -= clusters_to_free;
+        allocated_size = bytes_per_cluster * cluster_count;
+        if(cluster_count == 0) {
+            file_entry.direntry.cluster_lo = 0;
+            file_entry.direntry.cluster_hi = 0;
+        }
+    }
+    file_entry.direntry.size = size;
+
+    // Update dir entry
+    fat_dir_iterator_t iter = {.first_cluster = file_entry.dir_cluster};
+    int32_t dir_res = fat32_rm_file_entry(global_storage, &global_fat_meta, &iter, &file_entry);
+    if(dir_res<0) {
+        return dir_res;
+    }
+    dir_res = fat32_add_file_entry(global_storage, &global_fat_meta, &iter, &file_entry);
+    if(dir_res<0) {
+        return dir_res;
+    }
+    fat_free_dir_iterator(&iter);
+
+    if(size == 0) {
+        return 0;
+    }
+
+    if(size > orig_size) {
+        uint8_t* zeros = malloc(size - orig_size);
+        memset(zeros, 0, size - orig_size);
+        int32_t write_res = fat32_write_to_offset(global_storage, &global_fat_meta, first_cluster, orig_size, size - orig_size, zeros);
         if(write_res < 0) {
             return write_res;
         }
     }
 
-    return size;
+    return 0;
 }
 
 static int fs_open(const char *path, struct fuse_file_info *fi)
@@ -1661,8 +1799,9 @@ static int fs_open(const char *path, struct fuse_file_info *fi)
 static int fs_release(const char *path, struct fuse_file_info *fi)
 {
 	(void) path;
+    (void) fi;
     // Do nothing
-    
+
 	return 0;
 }
 
@@ -1681,6 +1820,7 @@ static const struct fuse_operations fs_oper = {
     .write      = fs_write,
     .open       = fs_open,
     .release    = fs_release,
+    .truncate   = fs_truncate,
 };
 
 static void show_help(const char *progname)

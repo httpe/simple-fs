@@ -903,8 +903,8 @@ static void fat32_free_meta(fat32_meta_t* meta)
     meta->linked_fat = NULL;
 }
 
-
-int32_t fat32_allocate_cluster(block_storage_t* storage, fat32_meta_t* meta, uint32_t prev_cluster_number, uint32_t cluster_count_to_allocate)
+// Return: Cluster number of the first newly allocated cluster
+uint32_t fat32_allocate_cluster(block_storage_t* storage, fat32_meta_t* meta, uint32_t prev_cluster_number, uint32_t cluster_count_to_allocate)
 {
     uint32_t cluster_number = meta->fs_info->next_free_cluster;
     if(cluster_number == 0xFFFFFFFF) {
@@ -912,7 +912,7 @@ int32_t fat32_allocate_cluster(block_storage_t* storage, fat32_meta_t* meta, uin
     }
     uint32_t cluster_number_first_tried = cluster_number;
     uint32_t max_cluster_number = meta->bootsector->total_sectors_32 / meta->bootsector->sectors_per_cluster - 1;
-    uint32_t allocated = 0;
+    uint32_t allocated = 0, first_new_cluster_number = 0;
     
     fat32_meta_t new_meta = {0};
     fat32_copy_meta(&new_meta, meta);
@@ -924,6 +924,9 @@ int32_t fat32_allocate_cluster(block_storage_t* storage, fat32_meta_t* meta, uin
                 fat32_modify_fat_cache(&new_meta, prev_cluster_number, cluster_number);
             }
             fat32_modify_fat_cache(&new_meta, cluster_number, FAT_CLUSTER_EOC);
+            if(allocated == 0) {
+                first_new_cluster_number = cluster_number;
+            }
             allocated++;
         }
         if(cluster_number == max_cluster_number) {
@@ -933,7 +936,7 @@ int32_t fat32_allocate_cluster(block_storage_t* storage, fat32_meta_t* meta, uin
         }
         if(cluster_number == cluster_number_first_tried && allocated < cluster_count_to_allocate) {
             // all FAT entries tested, no free entry, disk is full
-            return -ENOSPC;
+            return 0;
         }
     }
 
@@ -950,10 +953,10 @@ int32_t fat32_allocate_cluster(block_storage_t* storage, fat32_meta_t* meta, uin
         meta->fs_info->next_free_cluster = cluster_number; // not a free cluster, but a good place to start looking for one
         res = fat32_write_fs_info(storage, meta);
 
-        return 0;
+        return first_new_cluster_number;
     } else {
         fat32_free_meta(&new_meta);
-        return -EIO;
+        return 0;
     }
 }
 
@@ -1194,8 +1197,8 @@ static int32_t fat32_add_file_entry(block_storage_t* storage, fat32_meta_t* meta
         assert(free_entry_count < dir_entry_needed);
         // if reach the end of entries and still no enough space, allocate a new cluster
         uint32_t clusters_to_alloc = (dir_entry_needed - free_entry_count - 1) / dir_entry_per_cluster + 1;
-        int32_t res = fat32_allocate_cluster(storage, meta, fat32_eoc_cluster_number(meta, iter->first_cluster), clusters_to_alloc);
-        if(res < 0) {
+        uint32_t first_new_cluster = fat32_allocate_cluster(storage, meta, fat32_eoc_cluster_number(meta, iter->first_cluster), clusters_to_alloc);
+        if(first_new_cluster == 0) {
             return -EIO;
         }
         fat_free_dir_iterator(iter);
@@ -1328,21 +1331,10 @@ static int32_t fat32_rm_file_entry(block_storage_t* storage, fat32_meta_t* meta,
     return file_entry->dir_entry_count;
 }
 
-static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
+
+static int32_t fat32_create_new(const char *path, fat32_direntry_short_t short_dir_entry)
 {
-    (void) rdev;
-
-    if(!(S_ISREG(mode) || S_ISDIR(mode))) {
-        // Only support creating regular file or directory
-        return -EPERM;
-    }
-
-    // size_t lenpath = strlen(path);
-    // if(lenpath >= FS_MAX_FILENAME_LEN) {
-    //     // equal sign: the max len include the terminal \0
-    //     return -EPERM;
-    // }
-
+    // TODO: Test for illegal path (characters / length etc.)
     fat32_file_entry_t file_entry = {0};
     fat_resolve_path_status_t status = fat32_resolve_path(global_storage, &global_fat_meta, path, &file_entry);
 
@@ -1362,17 +1354,22 @@ static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
     uint32_t path_len = strlen(path);
     assert(path_len > 1);
     char* filename = (char*) &path[path_len-1];
-    if(*filename == '/') {
-        // path shall not ends with '/' 
+    while(*filename == '/') {
+        // skip trailing '/'
+        *filename = 0;
+        filename--;
+    }
+    if(filename < path) {
         return -EPERM;
     }
+    // Get file name from path
     while(*filename!='/' && filename>path) {
         filename--;
     }
     filename++;
 
     strcpy(file_entry.filename, filename);
-    memset(&file_entry.direntry, 0, sizeof(fat32_direntry_short_t));
+    file_entry.direntry = short_dir_entry;
 
     int32_t res = fat32_add_file_entry(global_storage, &global_fat_meta, &iter, &file_entry);
     fat_free_dir_iterator(&iter);
@@ -1380,6 +1377,35 @@ static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
         return res;
     }
     return 0;
+}
+
+static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
+{
+    (void) rdev;
+
+    if(!S_ISREG(mode)) {
+        // Only support creating regular file
+        return -EPERM;
+    }
+
+    fat32_direntry_short_t short_dir_entry = {0};
+    int32_t res = fat32_create_new(path, short_dir_entry);
+    return res;
+}
+
+static int fs_mkdir(const char *path, mode_t mode)
+{
+    (void) mode;
+    
+    fat32_direntry_short_t short_dir_entry = {.attr = FAT_ATTR_DIRECTORY};
+    uint32_t first_new_cluster = fat32_allocate_cluster(global_storage, &global_fat_meta, 0, 1);
+    if(first_new_cluster == 0) {
+        return -EIO;
+    }
+    short_dir_entry.cluster_lo = first_new_cluster & 0x0000FFFF;
+    short_dir_entry.cluster_hi = first_new_cluster >> 16;
+    int32_t res = fat32_create_new(path, short_dir_entry);
+    return res;
 }
 
 static int fs_unlink(const char *path)
@@ -1486,6 +1512,7 @@ static const struct fuse_operations fs_oper = {
     .unlink     = fs_unlink,
     .rmdir      = fs_rmdir,
     .mknod      = fs_mknod,
+    .mkdir      = fs_mkdir,
 };
 
 static void show_help(const char *progname)

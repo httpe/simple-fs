@@ -26,7 +26,7 @@ We have implemented two file systems right now:
 
 1. A [FAT-32](https://en.wikipedia.org/wiki/Design_of_the_FAT_file_system) file system: It is one of the main goal of this project.
     - If you follow the `Build & Run` section below, the binary `fat` generated is the FUSE driver for this file system.
-    - The current implementation includes most common read/write operations, further progress are expected. For a complete list of FUSE operation implemented, please search `fuse_operations` in `fat.c`.
+    - The current implementation includes most common read/write operations. More testing and code clean up are expected. For a complete list of FUSE operation implemented, please search `fuse_operations` in `fat.c`.
     - Our goal is to implement most FAT-32 features, but excluding:
         - USC-2 unicode support: We will replace any non US-ASCII (code point > 127) characters to '_', since implementing unicode support is hard and not the main purpose of this project.
         - Compatibility: We will only support the clean and standard version of FAT-32 (as documented on the Wikipedia page), without considering to make it working on older FAT file system, such as FAT-12 and FAT-16 or non-standard/corrupted file system.

@@ -191,8 +191,6 @@ int32_t fat32_get_meta(block_storage_t* storage, fat32_meta_t* meta)
     return 0;
 }
 
-
-
 fat_cluster_status_t fat32_get_cluster_info(fat32_meta_t* meta, uint32_t cluster_number, fat_cluster_t* cluster)
 {
     // First&second cluster are reserved for FAT ID and End of Cluster Mark 
@@ -223,6 +221,51 @@ static uint32_t count_clusters(fat32_meta_t* meta, uint32_t cluster_number)
             return total_cluster_count;
         }
     }
+}
+
+// Get cluster number by indexing into a cluster chain, negative index means counting from EOC
+static uint32_t fat32_index_cluster_chain(fat32_meta_t* meta, uint32_t cluster_number, int32_t index)
+{
+    if(cluster_number == 0) {
+        return 0;
+    }
+
+    if(index < 0) {
+        uint32_t cluster_count = count_clusters(meta, cluster_number);
+        index = cluster_count + index;
+    }
+    if(index < 0) {
+        return 0;
+    }
+    if(index == 0) {
+        return cluster_number;
+    }
+    fat_cluster_t cluster = {.next = cluster_number};
+    while(index > 0) {
+        if(cluster.next == 0) {
+            return 0;
+        }
+        fat32_get_cluster_info(meta, cluster.next, &cluster);
+        index--;
+    }
+    return cluster.next;
+}
+
+// Can only be used to seek existing clusters
+static uint32_t fat32_cluster_by_offset(fat32_meta_t* meta, uint32_t starting_cluster_number, uint32_t byte_offset)
+{
+    uint32_t bytes_per_cluster = meta->bootsector->sectors_per_cluster*meta->bootsector->bytes_per_sector;
+    uint32_t cluster_offset = byte_offset / bytes_per_cluster;
+    if(cluster_offset == 0) {
+        return starting_cluster_number;
+    }
+    fat_cluster_t cluster = {.next = starting_cluster_number};
+    while(cluster_offset>0) {
+        assert(cluster.next != 0);
+        fat32_get_cluster_info(meta, cluster.next, &cluster);
+        cluster_offset--;
+    }
+    return cluster.next;
 }
 
 int32_t fat32_write_fs_info(block_storage_t* storage, fat32_meta_t* meta)
@@ -294,64 +337,6 @@ static void fat32_free_meta(fat32_meta_t* meta)
     meta->fat = NULL;
 }
 
-static uint32_t fat32_eoc_cluster_number(fat32_meta_t* meta, uint32_t cluster_number)
-{
-    if(cluster_number == 0) {
-        return 0;
-    }
-    fat_cluster_t cluster = {.next = cluster_number};
-    while(cluster.next) {
-        fat32_get_cluster_info(meta, cluster.next, &cluster);
-    }
-    return cluster.curr;
-}
-
-// Get cluster number by indexing into a cluster chain, negative index means counting from EOC
-static uint32_t fat32_index_cluster_chain(fat32_meta_t* meta, uint32_t cluster_number, int32_t index)
-{
-    if(cluster_number == 0) {
-        return 0;
-    }
-
-    if(index < 0) {
-        uint32_t cluster_count = count_clusters(meta, cluster_number);
-        index = cluster_count + index;
-    }
-    if(index < 0) {
-        return 0;
-    }
-    if(index == 0) {
-        return cluster_number;
-    }
-    fat_cluster_t cluster = {.next = cluster_number};
-    while(index > 0) {
-        if(cluster.next == 0) {
-            return 0;
-        }
-        fat32_get_cluster_info(meta, cluster.next, &cluster);
-        index--;
-    }
-    return cluster.next;
-}
-
-// Can only be used to seek existing clusters
-static uint32_t fat32_cluster_by_offset(fat32_meta_t* meta, uint32_t starting_cluster_number, uint32_t byte_offset)
-{
-    uint32_t bytes_per_cluster = meta->bootsector->sectors_per_cluster*meta->bootsector->bytes_per_sector;
-    uint32_t cluster_offset = byte_offset / bytes_per_cluster;
-    if(cluster_offset == 0) {
-        return starting_cluster_number;
-    }
-    fat_cluster_t cluster = {.next = starting_cluster_number};
-    while(cluster_offset>0) {
-        assert(cluster.next != 0);
-        fat32_get_cluster_info(meta, cluster.next, &cluster);
-        cluster_offset--;
-    }
-    return cluster.next;
-}
-
-
 // Return: Cluster number of the first newly allocated cluster
 uint32_t fat32_allocate_cluster(block_storage_t* storage, fat32_meta_t* meta, uint32_t prev_cluster_number, uint32_t cluster_count_to_allocate)
 {
@@ -394,7 +379,6 @@ uint32_t fat32_allocate_cluster(block_storage_t* storage, fat32_meta_t* meta, ui
 
     int32_t res = fat32_write_fat(storage, meta, new_meta.fat);
     if(res == 0) {
-        // Update memory cache
         // Update memory cache
         fat32_copy_meta(meta, &new_meta);
         fat32_free_meta(&new_meta);
@@ -457,16 +441,6 @@ static int32_t fat32_free_cluster(block_storage_t* storage, fat32_meta_t* meta, 
     }
 
 }
-
-// int64_t fat32_read_cluster(block_storage_t* storage, fat32_meta_t* meta, uint32_t cluster_number, uint8_t* buff)
-// {
-//     assert(cluster_number >= 2);
-//     uint32_t sectors_to_read = meta->bootsector->sectors_per_cluster;
-//     // the cluster 0 and 1 are not of size sectors_per_cluster
-//     uint32_t lba = meta->bootsector->reserved_sector_count + meta->bootsector->table_sector_size_32*meta->bootsector->table_count + (cluster_number-2)*meta->bootsector->sectors_per_cluster;
-//     int64_t bytes_read = storage->read_blocks(storage, buff, lba, sectors_to_read);
-//     return bytes_read;
-// }
 
 int64_t fat32_read_clusters(block_storage_t* storage, fat32_meta_t* meta, uint32_t cluster_number, uint32_t clusters_to_read, uint8_t* buff) 
 {
@@ -566,10 +540,6 @@ static void fat_standardize_short_name(char* filename, fat32_direntry_short_t* s
     memmove(&filename[name_len+1],  short_entry->ext, FAT_SHORT_EXT_LEN);
     filename[name_len+1+FAT_SHORT_EXT_LEN] = 0;
     trim_file_name((char*)filename);
-    // if(strlen((char*)filename)==name_len+1){
-    //     // if no extension, remove the '.' added
-    //     filename[name_len] = 0;
-    // }
     if(filename[0] == 0x05) {
         // If DIR_Name[0] == 0x05, then the actual file name character for this byte is 0xE5
        filename[0] = 0xE5;
@@ -772,9 +742,6 @@ static fat_resolve_path_status_t fat32_resolve_path(block_storage_t* storage, fa
 
     return resolve_status;
 }
-
-
-
 
 static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 			 off_t offset, struct fuse_file_info *fi,
@@ -1159,7 +1126,7 @@ static int32_t fat32_add_file_entry(block_storage_t* storage, fat32_meta_t* meta
         assert(free_entry_count < dir_entry_needed);
         // if reach the end of entries and still no enough space, allocate a new cluster
         uint32_t clusters_to_alloc = (dir_entry_needed - free_entry_count - 1) / dir_entry_per_cluster + 1;
-        uint32_t first_new_cluster = fat32_allocate_cluster(storage, meta, fat32_eoc_cluster_number(meta, iter->first_cluster), clusters_to_alloc);
+        uint32_t first_new_cluster = fat32_allocate_cluster(storage, meta, fat32_index_cluster_chain(meta, iter->first_cluster, -1), clusters_to_alloc);
         if(first_new_cluster == 0) {
             return -EIO;
         }
@@ -1344,6 +1311,8 @@ static int fs_mkdir(const char *path, mode_t mode)
     short_dir_entry.cluster_lo = first_new_cluster & 0x0000FFFF;
     short_dir_entry.cluster_hi = first_new_cluster >> 16;
     int32_t res = fat32_create_new(path, short_dir_entry);
+    // TODO: Add dot entries
+
     return res;
 }
 
@@ -1543,7 +1512,7 @@ static int fs_write(const char *path, const char *buf, size_t size,
 
     if(offset + size > allocated_size) {
         uint32_t clusters_to_allocate = ((offset + size) - allocated_size - 1) / bytes_per_cluster + 1;
-        uint32_t first_allocated_cluster = fat32_allocate_cluster(global_storage, &global_fat_meta, fat32_eoc_cluster_number(&global_fat_meta, first_cluster), clusters_to_allocate);
+        uint32_t first_allocated_cluster = fat32_allocate_cluster(global_storage, &global_fat_meta, fat32_index_cluster_chain(&global_fat_meta, first_cluster, -1), clusters_to_allocate);
         if(first_allocated_cluster == 0) {
             return -EIO;
         }
@@ -1624,7 +1593,7 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
 
     if(size > allocated_size) {
         uint32_t clusters_to_allocate = (size - allocated_size - 1) / bytes_per_cluster + 1;
-        uint32_t first_allocated_cluster = fat32_allocate_cluster(global_storage, &global_fat_meta, fat32_eoc_cluster_number(&global_fat_meta, first_cluster), clusters_to_allocate);
+        uint32_t first_allocated_cluster = fat32_allocate_cluster(global_storage, &global_fat_meta, fat32_index_cluster_chain(&global_fat_meta, first_cluster, -1), clusters_to_allocate);
         if(first_allocated_cluster == 0) {
             return -EIO;
         }

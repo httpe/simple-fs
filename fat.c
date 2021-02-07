@@ -187,35 +187,6 @@ int32_t fat32_get_meta(block_storage_t* storage, fat32_meta_t* meta)
             return -1;
         }
     }
-    // Populate the doubly linned FAT list
-    uint32_t fat_entry_count = fat_byte_size/sizeof(meta->fat[0]);
-    meta->linked_fat = malloc(sizeof(fat_cluster_stripped_t) * fat_entry_count);
-    memset(meta->linked_fat, 0, sizeof(fat_cluster_stripped_t) * fat_entry_count);
-    uint32_t next_cluster_number;
-    for(uint32_t i = 2; i < fat_entry_count; i++) {
-        // next/prev of linked_fat is cluster number, not FAT entry raw value
-        next_cluster_number = meta->fat[i] & 0x0FFFFFFF;
-        if(next_cluster_number >= 0x00000002 && next_cluster_number <= 0x0FFFFFEF) {
-            meta->linked_fat[i].next = next_cluster_number;
-            meta->linked_fat[next_cluster_number].prev = i;
-        }
-    }
-    // Ensure the linked_fat is populated correctly
-    for(uint32_t i = 2; i < fat_entry_count; i++) {
-        fat_cluster_status_t status = fat32_interpret_fat_entry(meta->fat[i]);
-        if(status == FAT_CLUSTER_USED) {
-            assert(meta->linked_fat[i].next != 0);
-            assert(meta->linked_fat[meta->linked_fat[i].next].prev ==  i);
-        } else if(status == FAT_CLUSTER_EOC) {
-            assert(meta->linked_fat[i].next == 0);
-        } else {
-            assert(meta->linked_fat[i].next == 0);
-            assert(meta->linked_fat[i].prev == 0);
-        }
-        if(meta->linked_fat[i].prev != 0) {
-            assert(meta->linked_fat[meta->linked_fat[i].prev].next ==  i);
-        }
-    }
 
     return 0;
 }
@@ -230,9 +201,11 @@ fat_cluster_status_t fat32_get_cluster_info(fat32_meta_t* meta, uint32_t cluster
     }
     
     fat_cluster_status_t status = fat32_interpret_fat_entry(meta->fat[cluster_number]);
-
-    cluster->next= meta->linked_fat[cluster_number].next;
-    cluster->prev = meta->linked_fat[cluster_number].prev;
+    if(status == FAT_CLUSTER_USED) {
+        cluster->next = meta->fat[cluster_number] & 0x0FFFFFFF;
+    } else {
+        cluster->next = 0;
+    }
     cluster->curr = cluster_number;
 
     return status;
@@ -250,67 +223,6 @@ static uint32_t count_clusters(fat32_meta_t* meta, uint32_t cluster_number)
             return total_cluster_count;
         }
     }
-}
-
-// Change a FAT entry value, update other affected entry and the doubly linked FAT simultaneously
-void fat32_modify_fat_cache(fat32_meta_t* meta, uint32_t cluster_number, uint32_t new_value)
-{
-
-    uint32_t* fat =  meta->fat;
-    fat_cluster_stripped_t* linked_fat = meta->linked_fat;
-
-    assert(cluster_number > 1);
-    // if(cluster_number < 2) {
-    //     // for the two starting entry, set as is
-    //     fat[cluster_number] = new_value;
-    //     return;
-    // }
-
-    fat_cluster_status_t status = fat32_interpret_fat_entry(new_value);
-    // preserve the upper 4 bits
-    fat[cluster_number] = (fat[cluster_number] & 0xF0000000) | (new_value & 0x0FFFFFFF);
-    if(status == FAT_CLUSTER_BAD || status == FAT_CLUSTER_RESERVED || status == FAT_CLUSTER_FREE) {
-        if(linked_fat[cluster_number].next != 0 && linked_fat[cluster_number].prev != 0) {
-            // if was in the middle of the chain, connect prev and next
-            assert(linked_fat[linked_fat[cluster_number].next].prev == cluster_number);
-            assert(linked_fat[linked_fat[cluster_number].prev].next == cluster_number);
-            linked_fat[linked_fat[cluster_number].next].prev = linked_fat[cluster_number].prev;
-            linked_fat[linked_fat[cluster_number].prev].next = linked_fat[cluster_number].next;
-        }
-        else if(linked_fat[cluster_number].next != 0) {
-            // if was start of the chain, set next to be start of the chain
-            assert(linked_fat[linked_fat[cluster_number].next].prev == cluster_number);
-            linked_fat[linked_fat[cluster_number].next].prev = 0;
-        }
-        else if(linked_fat[cluster_number].prev != 0) {
-            // if was end of the chain, set prev to be end of the chain 
-            assert(linked_fat[linked_fat[cluster_number].prev].next == cluster_number);
-            fat32_modify_fat_cache(meta, linked_fat[cluster_number].prev, FAT_CLUSTER_EOC);
-        }
-
-        linked_fat[cluster_number].next = 0;
-        linked_fat[cluster_number].prev = 0;
-
-        return;
-    }
-    if(linked_fat[cluster_number].next != 0) {
-        // set next to be start of the chain
-        assert(linked_fat[linked_fat[cluster_number].next].prev == cluster_number);
-        linked_fat[linked_fat[cluster_number].next].prev = 0;
-        linked_fat[cluster_number].next = 0;
-    }
-    if(status == FAT_CLUSTER_EOC) {
-        return;
-    }
-    assert(status == FAT_CLUSTER_USED);
-    uint32_t next_cluster_number = new_value & 0x0FFFFFFF;
-    // shall not point to the two starting reserved clusters
-    assert(next_cluster_number > 1);
-    linked_fat[cluster_number].next = next_cluster_number;
-    // the next cluster must not be already pointed by others
-    assert(linked_fat[next_cluster_number].prev == 0);
-    linked_fat[next_cluster_number].prev = cluster_number;
-    return;
 }
 
 int32_t fat32_write_fs_info(block_storage_t* storage, fat32_meta_t* meta)
@@ -360,12 +272,6 @@ static void fat32_copy_meta(fat32_meta_t* new_meta, fat32_meta_t* meta)
     }
     memmove(new_meta->fat, meta->fat, fat_byte_size);
 
-    uint32_t linked_fat_size = sizeof(fat_cluster_stripped_t) * fat_byte_size/sizeof(new_meta->fat[0]);
-    if(new_meta->linked_fat == NULL) {
-        new_meta->linked_fat = malloc(linked_fat_size);
-    }
-    memmove(new_meta->linked_fat, meta->linked_fat, linked_fat_size);
-
     if(new_meta->fs_info == NULL) {
         new_meta->fs_info = malloc(sizeof(fat32_fsinfo_t));
     }
@@ -386,8 +292,6 @@ static void fat32_free_meta(fat32_meta_t* meta)
     meta->fs_info = NULL;
     free(meta->fat);
     meta->fat = NULL;
-    free(meta->linked_fat);
-    meta->linked_fat = NULL;
 }
 
 static uint32_t fat32_eoc_cluster_number(fat32_meta_t* meta, uint32_t cluster_number)
@@ -463,12 +367,15 @@ uint32_t fat32_allocate_cluster(block_storage_t* storage, fat32_meta_t* meta, ui
     fat32_copy_meta(&new_meta, meta);
     
     while(allocated < cluster_count_to_allocate) {
-        fat_cluster_status_t status = fat32_interpret_fat_entry(meta->fat[cluster_number]);
+        fat_cluster_status_t status = fat32_interpret_fat_entry(new_meta.fat[cluster_number]);
         if(status == FAT_CLUSTER_FREE) {
             if(prev_cluster_number != 0) {
-                fat32_modify_fat_cache(&new_meta, prev_cluster_number, cluster_number);
+                fat_cluster_status_t prev_status = fat32_interpret_fat_entry(new_meta.fat[prev_cluster_number]);
+                assert(prev_status == FAT_CLUSTER_EOC);
+                new_meta.fat[prev_cluster_number] = (new_meta.fat[prev_cluster_number] & 0xF0000000) | (cluster_number & 0x0FFFFFFF);
             }
-            fat32_modify_fat_cache(&new_meta, cluster_number, FAT_CLUSTER_EOC);
+            new_meta.fat[cluster_number] = (new_meta.fat[cluster_number] & 0xF0000000) | (FAT_CLUSTER_EOC & 0x0FFFFFFF);
+            prev_cluster_number = cluster_number;
             if(allocated == 0) {
                 first_new_cluster_number = cluster_number;
             }
@@ -507,25 +414,28 @@ uint32_t fat32_allocate_cluster(block_storage_t* storage, fat32_meta_t* meta, ui
 
 
 // cluster_count_to_free = 0 means free to the end of the chain
-static int32_t fat32_free_cluster(block_storage_t* storage, fat32_meta_t* meta, uint32_t cluster_number, uint32_t cluster_count_to_free)
+static int32_t fat32_free_cluster(block_storage_t* storage, fat32_meta_t* meta, uint32_t prev_cluster_number, uint32_t cluster_number, uint32_t cluster_count_to_free)
 {
     fat_cluster_t cluster;
-    cluster.curr = cluster_number;
-    fat_cluster_status_t status = fat32_get_cluster_info(meta, cluster.curr, &cluster);
-    if(!(status == FAT_CLUSTER_USED || status == FAT_CLUSTER_EOC)) {
-        return -EIO;
-    }
 
     fat32_meta_t new_meta = {0};
     fat32_copy_meta(&new_meta, meta);
-
-    fat32_modify_fat_cache(&new_meta, cluster.curr, FAT_CLUSTER_FREE);
-    uint32_t cluster_freed = 1;
+    
+    uint32_t cluster_freed = 0;
+    cluster.next = cluster_number;
     while(cluster.next && (cluster_freed < cluster_count_to_free || cluster_count_to_free == 0)) {
-        status = fat32_get_cluster_info(meta, cluster.next, &cluster);
+        fat_cluster_status_t status = fat32_get_cluster_info(meta, cluster.next, &cluster);
         assert(status == FAT_CLUSTER_USED || status == FAT_CLUSTER_EOC);
         // set as free cluster
-        fat32_modify_fat_cache(&new_meta, cluster.curr, FAT_CLUSTER_FREE);
+        new_meta.fat[cluster.curr] = (new_meta.fat[cluster.curr] & 0xF0000000) | (FAT_CLUSTER_FREE & 0x0FFFFFFF);
+        if(prev_cluster_number != 0) {
+            if(cluster.next != 0) {
+                // if removing cluster in the middle of the chain, connect prev and next cluster
+                new_meta.fat[prev_cluster_number] = (new_meta.fat[prev_cluster_number] & 0xF0000000) | (cluster.next & 0x0FFFFFFF);
+            } else {
+                new_meta.fat[prev_cluster_number] = (new_meta.fat[prev_cluster_number] & 0xF0000000) | (FAT_CLUSTER_EOC & 0x0FFFFFFF);
+            }   
+        }
         cluster_freed++;
     }
 
@@ -1473,7 +1383,7 @@ static int fs_unlink(const char *path)
     fat_cluster_t cluster = {0};
     fat_cluster_status_t cluster_status = fat32_get_cluster_info(&global_fat_meta, file_content_cluster_number, &cluster);
     if(cluster_status == FAT_CLUSTER_EOC || FAT_CLUSTER_USED) {
-        res = fat32_free_cluster(global_storage, &global_fat_meta, file_content_cluster_number, 0); // free the whole cluster chain
+        res = fat32_free_cluster(global_storage, &global_fat_meta, 0, file_content_cluster_number, 0); // free the whole cluster chain
         if(res < 0) {
             return res;
         }
@@ -1545,7 +1455,7 @@ static int fs_rmdir(const char *path)
     fat_cluster_t cluster = {0};
     fat_cluster_status_t cluster_status = fat32_get_cluster_info(&global_fat_meta, file_content_cluster_number, &cluster);
     if(cluster_status == FAT_CLUSTER_EOC || FAT_CLUSTER_USED) {
-        res = fat32_free_cluster(global_storage, &global_fat_meta, file_content_cluster_number, 0); // free the whole cluster chain
+        res = fat32_free_cluster(global_storage, &global_fat_meta, 0, file_content_cluster_number, 0); // free the whole cluster chain
         if(res < 0) {
             return res;
         }
@@ -1728,7 +1638,13 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
     } else if(allocated_size - size >= bytes_per_cluster){
         int32_t clusters_to_free = (allocated_size - size) / bytes_per_cluster;
         uint32_t first_cluster_to_free = fat32_index_cluster_chain(&global_fat_meta, first_cluster, -clusters_to_free);
-        int32_t free_res = fat32_free_cluster(global_storage, &global_fat_meta, first_cluster_to_free, 0);
+        uint32_t last_remaining_cluster;
+        if(first_cluster_to_free == first_cluster) {
+            last_remaining_cluster = 0;
+        } else {
+            last_remaining_cluster = fat32_index_cluster_chain(&global_fat_meta, first_cluster, -clusters_to_free - 1);
+        }
+        int32_t free_res = fat32_free_cluster(global_storage, &global_fat_meta, last_remaining_cluster, first_cluster_to_free, 0);
         if(free_res < 0) {
             return free_res;
         }

@@ -114,22 +114,16 @@ typedef struct fat32_fsinfo {
     uint32_t trailing_signature;
 } __attribute__ ((__packed__)) fat32_fsinfo_t;
 
-typedef struct fat_cluster_stripped {
-	uint32_t next;
-	uint32_t prev;
-} fat_cluster_stripped_t;
 
 typedef struct fat32_meta {
     fat32_bootsector_t* bootsector;
     fat32_fsinfo_t* fs_info;
     uint32_t* fat;
-	fat_cluster_stripped_t* linked_fat;
 } fat32_meta_t;
 
 typedef struct fat_cluster {
 	uint32_t curr;
 	uint32_t next;
-	uint32_t prev;
 } fat_cluster_t;
 
 typedef enum fat_cluster_status {

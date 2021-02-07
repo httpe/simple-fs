@@ -24,16 +24,17 @@ We have implemented two file systems right now:
     - Please see `simple_fs.h` for the design in detail.
     - There are two implementation of the file system, `simple_fs.c` and `simple_fs_block.c`. They are mostly identical, except for `simple_fs.c` will call host OS's I/O functions directly to read/write disk image while `simple_fs_block.c` delegate the I/O to our `block_io.h` interface. Please see `The Plan on Implementing File System` for more details.
 
-1. A [FAT-32](https://en.wikipedia.org/wiki/Design_of_the_FAT_file_system) file system: It is one of the main goal of this project. 
+1. A [FAT-32](https://en.wikipedia.org/wiki/Design_of_the_FAT_file_system) file system: It is one of the main goal of this project.
     - If you follow the `Build & Run` section below, the binary `fat` generated is the FUSE driver for this file system.
-    - The current implementation is read-only, further progress are expected.
-    - Our goal is to implement most FAT-32 features, including writing of course, but excluding:
-        - USC-2 unicode support: We will replace any non US-ASCII (code point > 127) characters to '?', since implementing unicode support is hard and not the main purpose of this project.
-        - Support for maximum compatibility: We will only support the clean and standard version of FAT-32 (as documented on the Wikipedia page), without considering to make it working on older FAT file system, such as FAT-12 and FAT-16 or non-standard/corrupted file system.
+    - The current implementation includes most common read/write operations, further progress are expected. For a complete list of FUSE operation implemented, please search `fuse_operations` in `fat.c`.
+    - Our goal is to implement most FAT-32 features, but excluding:
+        - USC-2 unicode support: We will replace any non US-ASCII (code point > 127) characters to '_', since implementing unicode support is hard and not the main purpose of this project.
+        - Compatibility: We will only support the clean and standard version of FAT-32 (as documented on the Wikipedia page), without considering to make it working on older FAT file system, such as FAT-12 and FAT-16 or non-standard/corrupted file system.
 
 ## Build & Run
 
 ### Build
+
 You can built the source code by:
 
 ```bash

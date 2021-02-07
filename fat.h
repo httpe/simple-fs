@@ -39,14 +39,15 @@ typedef struct fat32_bootsector
 }__attribute__((packed)) fat32_bootsector_t;
 
 // Source: https://github.com/aroulin/FAT32-FS-Driver
-
+#define FAT_SHORT_NAME_LEN 8
+#define FAT_SHORT_EXT_LEN 3
 typedef struct fat32_direntry_short {
 	/* 0*/	union {
 			struct {
-				uint8_t		name[8];
-				uint8_t		ext[3];
+				uint8_t		name[FAT_SHORT_NAME_LEN];
+				uint8_t		ext[FAT_SHORT_EXT_LEN];
 			};
-			uint8_t			nameext[11];
+			uint8_t			nameext[FAT_SHORT_NAME_LEN+FAT_SHORT_EXT_LEN];
 		};
 	/*11*/	uint8_t		attr;
 	/*12*/	uint8_t		res;
@@ -83,11 +84,12 @@ typedef union {
 #define FAT32_FILENAME_SIZE (FAT32_LONG_NAME_MAX_LEN_USC2*2)
 typedef struct fat32_file_entry {
     fat32_direntry_short_t direntry;
-    uint8_t filename[FAT32_LONG_NAME_MAX_LEN_USC2*2+1];// +1: space for null terminator
-	uint32_t dir_entry_cluster_start;
-	uint32_t dir_entry_cluster_end;
-	uint32_t dir_entry_idx_start;
-	uint32_t dir_entry_idx_end;
+    char filename[FAT32_LONG_NAME_MAX_LEN_USC2*2+1];// +1: space for null terminator
+	// uint32_t dir_entry_cluster_start; // the cluster containing the start of this entry
+	// uint32_t dir_entry_idx_start; // idx relative to the cluster
+	uint32_t dir_cluster; // first cluster of the dir
+	uint32_t first_dir_entry_idx; // an index into all clusters constitute the dir
+	uint32_t dir_entry_count;
 } fat32_file_entry_t;
 
 
@@ -139,18 +141,19 @@ typedef enum fat_cluster_status {
 } fat_cluster_status_t;
 
 typedef struct fat_dir_iterator {
-	uint32_t current_cluster;
-	uint32_t current_dir_entry_idx;
-	uint32_t lfn_entry_buffered;
-	uint8_t lfn_checksum;
+	uint32_t first_cluster;
+	uint32_t dir_entry_count;
+	uint32_t entry_per_cluster;
+	uint32_t current_dir_entry_idx; // an index into all clusters constitute the dir
 	fat32_direntry_t* dir_entries;
 } fat_dir_iterator_t;
 
 typedef enum fat_iterate_dir_status {
 	FAT_DIR_ITER_VALID_ENTRY,
-	FAT_DIR_DOT_ENTRY,
+	FAT_DIR_ITER_DOT_ENTRY,
 	FAT_DIR_ITER_DELETED,
 	FAT_DIR_ITER_NO_MORE_ENTRY,
+	FAT_DIR_ITER_FREE_ENTRY,
 	FAT_DIR_ITER_ERROR
 } fat_iterate_dir_status_t;
 

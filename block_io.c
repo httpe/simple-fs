@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <stdio.h>
+#include <errno.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -25,18 +26,18 @@ static file_storage_t disk_image_internal_info;
 static block_storage_t* storage_list[MAX_STORAGE_DEV_COUNT];
 static uint32_t n_storage;
 
-uint32_t read_blocks(block_storage_t* storage, uint8_t* buff,  uint32_t LBA, uint32_t block_count)
+int64_t read_blocks(block_storage_t* storage, uint8_t* buff,  uint32_t LBA, uint32_t block_count)
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_RDONLY);
     int size = block_count*storage->block_size;
     int offset = LBA*storage->block_size;
-    int res = pread(fd, buff, size, offset);
+    int64_t res = pread(fd, buff, size, offset);
     close(fd);
     return res;
 }
 
-uint32_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_count, const uint8_t* buff)
+int64_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_count, const uint8_t* buff)
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_WRONLY);
@@ -45,7 +46,7 @@ uint32_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_cou
     }
     int size = block_count*storage->block_size;
     int offset = LBA*storage->block_size;
-    int res = pwrite(fd, buff, size, offset);
+    int64_t res = pwrite(fd, buff, size, offset);
     close(fd);
     return res;
 }

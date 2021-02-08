@@ -1028,6 +1028,9 @@ static int32_t fat32_set_short_name(fat32_file_entry_t* file_entry)
         if(copied == 0 && file_entry->filename[i] == '.') {
             continue;
         }
+        if(file_entry->filename[i] == '.') {
+            break;
+        }
         file_entry->direntry.name[copied] = file_entry->filename[i];
         if(copied == 0 && file_entry->direntry.name[copied] == 0xE5) {
             file_entry->direntry.name[0] = 0x05;
@@ -1058,21 +1061,34 @@ static int32_t fat32_set_numeric_tail(block_storage_t* storage, fat32_meta_t* me
 {
     char shortname[FAT_SHORT_NAME_LEN + FAT_SHORT_EXT_LEN+1];
     fat32_file_entry_t existing_entry = {0};
+    char buff[FAT_SHORT_NAME_LEN];
 
     // Assume we always need to add numeric tail here
-    for (uint32_t number_tail = 1; number_tail <= 999999; number_tail ++) {
-        for(int32_t i=FAT_SHORT_NAME_LEN - 1; i>=2; i--) {
-            file_entry->direntry.name[i] = number_tail % 10 + '0';
-            number_tail /= 10;
-            if(number_tail == 0) {
-                file_entry->direntry.name[i-1] = '~';
-                break;
-            }
-        }
-        fat_standardize_short_name(shortname, &file_entry->direntry);
+    // Ref: http://elm-chan.org/fsw/ff/00index_e.html
+    for (uint32_t number_tail = 1; number_tail <= 999999; number_tail++) {
+        uint32_t seq = number_tail;
+        int32_t i=FAT_SHORT_NAME_LEN - 1;
+        do {
+            uint8_t c = (uint8_t)((seq % 16) + '0');
+            if (c > '9') c += 7;
+            buff[i--] = c;
+            seq /= 16;
+        } while(seq);
+        buff[i] = '~';
+
+        fat32_file_entry_t working_entry = *file_entry;
+        /* Append the number to the SFN body */
+        int32_t j = 0;
+        for (; j < i && working_entry.direntry.name[j] != ' '; j++);
+        do {
+            working_entry.direntry.name[j++] = (i < 8) ? buff[i++] : ' ';
+        } while (j < 8);
+
+        fat_standardize_short_name(shortname, &working_entry.direntry);
         fat_resolve_path_status_t status = fat32_dir_lookup(storage, meta, iter, shortname, &existing_entry);
         if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
             // if short name has no collision anymore
+            memcpy(file_entry->direntry.name, working_entry.direntry.name, FAT_SHORT_NAME_LEN);
             return number_tail;
         }
     }
@@ -1699,19 +1715,37 @@ static int fs_open(const char *path, struct fuse_file_info *fi)
     if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
         return -EISDIR;
     }
-    if(status == FAT_PATH_RESOLVE_INVALID_PATH || status == FAT_PATH_RESOLVE_NOT_FOUND) {
+    if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
         return -ENOENT;
     }
     if(status == FAT_PATH_RESOLVE_ERROR) {
         return -EIO;
     }
-    assert(status == FAT_PATH_RESOLVE_FOUND);
-
-    if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
-        return -EISDIR;
+    if(status == FAT_PATH_RESOLVE_FOUND) {
+        if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
+            return -EISDIR;
+        }
+        if(HAS_ATTR(fi->flags, O_EXCL)) {
+            // O_EXCL Ensure that this call creates the file
+            return -EEXIST;
+        }
+        // Do nothing
+        return 0;
     }
-
-    // Do nothing
+    assert(status == FAT_PATH_RESOLVE_NOT_FOUND);
+    if(HAS_ATTR(fi->flags, O_CREAT)) {
+        fat32_direntry_short_t short_dir_entry = {0};
+        int32_t res = fat32_create_new(path, short_dir_entry);
+        if(res < 0) {
+            return res;
+        }
+    }
+    if(HAS_ATTR(fi->flags, O_TRUNC)) {
+        int32_t res = fs_truncate(path, 0, fi);
+        if(res < 0) {
+            return res;
+        }
+    }
 
 	return 0;
 }

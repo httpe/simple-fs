@@ -446,8 +446,6 @@ int64_t fat32_read_clusters(block_storage_t* storage, fat32_meta_t* meta, uint32
 {
     assert(cluster_number >= 2);
     uint32_t cluster_byte_size = meta->bootsector->bytes_per_sector*meta->bootsector->sectors_per_cluster;
-    // the cluster 0 and 1 are not of size sectors_per_cluster
-    uint32_t lba = meta->bootsector->reserved_sector_count + meta->bootsector->table_sector_size_32*meta->bootsector->table_count + (cluster_number-2)*meta->bootsector->sectors_per_cluster;
 
     fat_cluster_t cluster = {.next = cluster_number};
     int64_t total_bytes_read = 0;
@@ -455,6 +453,8 @@ int64_t fat32_read_clusters(block_storage_t* storage, fat32_meta_t* meta, uint32
         assert(cluster.next != 0);
         fat_cluster_status_t status = fat32_get_cluster_info(meta, cluster.next, &cluster);
         assert(status == FAT_CLUSTER_USED || (status == FAT_CLUSTER_EOC && i == clusters_to_read-1));
+        // the cluster 0 and 1 are not of size sectors_per_cluster
+        uint32_t lba = meta->bootsector->reserved_sector_count + meta->bootsector->table_sector_size_32*meta->bootsector->table_count + (cluster.curr-2)*meta->bootsector->sectors_per_cluster;
         int64_t bytes_read = storage->read_blocks(storage, buff, lba, meta->bootsector->sectors_per_cluster);
         if(bytes_read < 0) {
             return -errno;
@@ -472,15 +472,14 @@ int64_t fat32_write_clusters(block_storage_t* storage, fat32_meta_t* meta, uint3
     assert(cluster_number >= 2);
     uint32_t cluster_byte_size = meta->bootsector->bytes_per_sector*meta->bootsector->sectors_per_cluster;
 
-    // the cluster 0 and 1 are not of size sectors_per_cluster
-    uint32_t lba = meta->bootsector->reserved_sector_count + meta->bootsector->table_sector_size_32*meta->bootsector->table_count + (cluster_number-2)*meta->bootsector->sectors_per_cluster;
-
     fat_cluster_t cluster = {.next = cluster_number};
     int64_t total_bytes_written = 0;
     for(uint32_t i=0; i < clusters_to_write; i++) {
         assert(cluster.next != 0);
         fat_cluster_status_t status = fat32_get_cluster_info(meta, cluster.next, &cluster);
         assert(status == FAT_CLUSTER_USED || (status == FAT_CLUSTER_EOC && i == clusters_to_write-1));
+        // the cluster 0 and 1 are not of size sectors_per_cluster
+        uint32_t lba = meta->bootsector->reserved_sector_count + meta->bootsector->table_sector_size_32*meta->bootsector->table_count + (cluster.curr-2)*meta->bootsector->sectors_per_cluster;
         int64_t bytes_written = storage->write_blocks(storage, lba, meta->bootsector->sectors_per_cluster, buff);
         if(bytes_written < 0) {
             return -errno;
@@ -576,7 +575,7 @@ fat_iterate_dir_status_t fat32_iterate_dir(block_storage_t* storage, fat32_meta_
 
         fat32_direntry_t* entry = &iter->dir_entries[iter->current_dir_entry_idx];
         // Algo Ref: https://wiki.osdev.org/FAT#Reading_Directories
-        if(entry->short_entry.attr == FAT_ATTR_LFN){
+        if(entry->short_entry.attr == FAT_ATTR_LFN && entry->short_entry.nameext[0] != 0xE5){
             // Is this entry a long file name entry? If the 11'th byte of the entry equals 0x0F, then it is a long file name entry. Otherwise, it is not.
             // Read the portion of the long filename into a temporary buffer. Goto 8.
             if((entry->long_entry.seq & 0x40) == 0x40) {
@@ -1060,19 +1059,8 @@ static int32_t fat32_set_numeric_tail(block_storage_t* storage, fat32_meta_t* me
     char shortname[FAT_SHORT_NAME_LEN + FAT_SHORT_EXT_LEN+1];
     fat32_file_entry_t existing_entry = {0};
 
-    uint32_t number_tail = 0;
-    
-    while (1) {
-        fat_standardize_short_name(shortname, &file_entry->direntry);
-        fat_resolve_path_status_t status = fat32_dir_lookup(storage, meta, iter, shortname, &existing_entry);
-        if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
-            // if short name has no collision anymore
-            return number_tail;
-        }
-        number_tail++;
-        if(number_tail > 999999) {
-            return -1;
-        }
+    // Assume we always need to add numeric tail here
+    for (uint32_t number_tail = 1; number_tail <= 999999; number_tail ++) {
         for(int32_t i=FAT_SHORT_NAME_LEN - 1; i>=2; i--) {
             file_entry->direntry.name[i] = number_tail % 10 + '0';
             number_tail /= 10;
@@ -1081,7 +1069,14 @@ static int32_t fat32_set_numeric_tail(block_storage_t* storage, fat32_meta_t* me
                 break;
             }
         }
+        fat_standardize_short_name(shortname, &file_entry->direntry);
+        fat_resolve_path_status_t status = fat32_dir_lookup(storage, meta, iter, shortname, &existing_entry);
+        if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
+            // if short name has no collision anymore
+            return number_tail;
+        }
     }
+    return -1;
 }
 
 // Return: dir entries added
@@ -1141,7 +1136,10 @@ static int32_t fat32_add_file_entry(block_storage_t* storage, fat32_meta_t* meta
     uint32_t remaining_char_to_copy = lfn_len;
     char* p_filename = &file_entry->filename[lfn_len];
     fat32_set_short_name(file_entry);
-    fat32_set_numeric_tail(storage, meta, iter, file_entry);
+    int32_t res_numtail = fat32_set_numeric_tail(storage, meta, iter, file_entry);
+    if(res_numtail < 0) {
+        return -ENOSPC;
+    }
     fat32_direntry_short_t short_entry = file_entry->direntry;
     fat32_direntry_long_t long_entry = {.attr = FAT_ATTR_LFN, .csum = lfn_checksum(short_entry.nameext), .type=0x00, .reserved2=0x00};
     for(uint32_t idx = 0; idx < dir_entry_needed; idx++) {

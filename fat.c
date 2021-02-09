@@ -810,13 +810,29 @@ time_t convert_datetime(uint16_t date_entry, uint16_t time_entry) {
 
 	time(&raw_time);
 	time_info = localtime(&raw_time);
-	time_info->tm_sec = (time_entry & 0x1f) << 1;
+	time_info->tm_sec = (time_entry & 0x1F) << 1;
 	time_info->tm_min = (time_entry & 0x7E0) >> 5;
 	time_info->tm_hour = (time_entry & 0xF800) >> 11;
 	time_info->tm_mday = date_entry & 0x1F;
 	time_info->tm_mon = ((date_entry & 0x1E0) >> 5) - 1;
 	time_info->tm_year = ((date_entry & 0xFE00) >> 9) + 80;
 	return mktime(time_info);
+}
+
+void get_timestamp(uint16_t* date_entry, uint16_t* time_entry)
+{
+	struct tm * time_info;
+	time_t raw_time;
+	time(&raw_time);
+	time_info = localtime(&raw_time);
+    *time_entry = 0;
+    *time_entry += (time_info->tm_sec >> 1);
+    *time_entry += (time_info->tm_min << 5);
+    *time_entry += (time_info->tm_hour << 11);
+    *date_entry = 0;
+    *date_entry += time_info->tm_mday;
+    *date_entry += (time_info->tm_mon + 1) << 5;
+    *date_entry += (time_info->tm_year - 80) << 9;
 }
 
 static int fs_getattr(const char *path, struct stat *st,
@@ -1292,6 +1308,12 @@ static int32_t fat32_create_new(const char *path, fat32_direntry_short_t short_d
 
     strcpy(file_entry.filename, filename);
     file_entry.direntry = short_dir_entry;
+    uint16_t date, time;
+    get_timestamp(&date, &time);
+    file_entry.direntry.ctime_date = date;
+    file_entry.direntry.ctime_time = time;
+    file_entry.direntry.mtime_date = date;
+    file_entry.direntry.mtime_time = time;
 
     int32_t res = fat32_add_file_entry(&global_fat_meta, &iter, &file_entry);
     fat_free_dir_iterator(&iter);
@@ -1545,6 +1567,11 @@ static int fs_write(const char *path, const char *buf, size_t size,
         file_entry.direntry.size = offset + size;
     }
 
+    uint16_t date, time;
+    get_timestamp(&date, &time);
+    file_entry.direntry.mtime_time = time;
+    file_entry.direntry.mtime_date = date;
+
     // Update dir entry
     fat_dir_iterator_t iter = {.first_cluster = file_entry.dir_cluster};
     int32_t dir_res = fat32_rm_file_entry(&global_fat_meta, &iter, &file_entry);
@@ -1641,6 +1668,10 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
         }
     }
     file_entry.direntry.size = size;
+    uint16_t date, time;
+    get_timestamp(&date, &time);
+    file_entry.direntry.mtime_time = time;
+    file_entry.direntry.mtime_date = date;
 
     // Update dir entry
     fat_dir_iterator_t iter = {.first_cluster = file_entry.dir_cluster};

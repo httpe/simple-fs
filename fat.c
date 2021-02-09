@@ -385,13 +385,15 @@ uint32_t fat32_allocate_cluster(fat32_meta_t* meta, uint32_t prev_cluster_number
 // cluster_count_to_free = 0 means free to the end of the chain
 static int32_t fat32_free_cluster(fat32_meta_t* meta, uint32_t prev_cluster_number, uint32_t cluster_number, uint32_t cluster_count_to_free)
 {
-    fat_cluster_t cluster;
+    if(cluster_number == 0) {
+        return 0;
+    }
 
     fat32_meta_t new_meta = {0};
     fat32_copy_meta(&new_meta, meta);
     
     uint32_t cluster_freed = 0;
-    cluster.next = cluster_number;
+    fat_cluster_t cluster = {.next = cluster_number};
     while(cluster.next && (cluster_freed < cluster_count_to_free || cluster_count_to_free == 0)) {
         fat_cluster_status_t status = fat32_get_cluster_info(meta, cluster.next, &cluster);
         assert(status == FAT_CLUSTER_USED || status == FAT_CLUSTER_EOC);
@@ -1400,13 +1402,9 @@ static int fs_unlink(const char *path)
 
     // Free data clusters
     uint32_t file_content_cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
-    fat_cluster_t cluster = {0};
-    fat_cluster_status_t cluster_status = fat32_get_cluster_info(&global_fat_meta, file_content_cluster_number, &cluster);
-    if(cluster_status == FAT_CLUSTER_EOC || FAT_CLUSTER_USED) {
-        res = fat32_free_cluster(&global_fat_meta, 0, file_content_cluster_number, 0); // free the whole cluster chain
-        if(res < 0) {
-            return res;
-        }
+    res = fat32_free_cluster(&global_fat_meta, 0, file_content_cluster_number, 0); // free the whole cluster chain
+    if(res < 0) {
+        return res;
     }
 
     return 0;
@@ -1472,18 +1470,28 @@ static int fs_rmdir(const char *path)
 
     // Free data clusters
     uint32_t file_content_cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
-    fat_cluster_t cluster = {0};
-    fat_cluster_status_t cluster_status = fat32_get_cluster_info(&global_fat_meta, file_content_cluster_number, &cluster);
-    if(cluster_status == FAT_CLUSTER_EOC || FAT_CLUSTER_USED) {
-        res = fat32_free_cluster(&global_fat_meta, 0, file_content_cluster_number, 0); // free the whole cluster chain
-        if(res < 0) {
-            return res;
-        }
+    res = fat32_free_cluster(&global_fat_meta, 0, file_content_cluster_number, 0); // free the whole cluster chain
+    if(res < 0) {
+        return res;
     }
 
     return 0;
 }
 
+static int32_t fat32_update_file_entry(fat32_meta_t* meta, fat32_file_entry_t* file_entry)
+{
+    fat_dir_iterator_t iter = {.first_cluster = file_entry->dir_cluster};
+    int32_t dir_res = fat32_rm_file_entry(meta, &iter, file_entry);
+    if(dir_res<0) {
+        return dir_res;
+    }
+    dir_res = fat32_add_file_entry(meta, &iter, file_entry);
+    if(dir_res<0) {
+        return dir_res;
+    }
+    fat_free_dir_iterator(&iter);
+    return 0;
+}
 
 static int fs_write(const char *path, const char *buf, size_t size,
 		     off_t offset, struct fuse_file_info *fi)
@@ -1517,10 +1525,10 @@ static int fs_write(const char *path, const char *buf, size_t size,
     }
 
     uint32_t first_cluster = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
+
     uint32_t cluster_count = first_cluster == 0 ? 0 : count_clusters(&global_fat_meta, first_cluster);
     uint32_t bytes_per_cluster = global_fat_meta.bootsector->sectors_per_cluster*global_fat_meta.bootsector->bytes_per_sector;
     uint32_t allocated_size = bytes_per_cluster * cluster_count;
-
     if(offset + size > allocated_size) {
         uint32_t clusters_to_allocate = ((offset + size) - allocated_size - 1) / bytes_per_cluster + 1;
         uint32_t first_allocated_cluster = fat32_allocate_cluster(&global_fat_meta, fat32_index_cluster_chain(&global_fat_meta, first_cluster, -1), clusters_to_allocate);
@@ -1529,8 +1537,6 @@ static int fs_write(const char *path, const char *buf, size_t size,
         }
         if(first_cluster == 0) {
             first_cluster = first_allocated_cluster;
-            cluster_count += clusters_to_allocate;
-            allocated_size = bytes_per_cluster * cluster_count;
             file_entry.direntry.cluster_lo = first_allocated_cluster & 0x0000FFFF;
             file_entry.direntry.cluster_hi = first_allocated_cluster >> 16;
         }
@@ -1545,17 +1551,10 @@ static int fs_write(const char *path, const char *buf, size_t size,
     file_entry.direntry.mtime_time = time;
     file_entry.direntry.mtime_date = date;
 
-    // Update dir entry
-    fat_dir_iterator_t iter = {.first_cluster = file_entry.dir_cluster};
-    int32_t dir_res = fat32_rm_file_entry(&global_fat_meta, &iter, &file_entry);
-    if(dir_res<0) {
+    int32_t dir_res = fat32_update_file_entry(&global_fat_meta, &file_entry);
+    if(dir_res < 0) {
         return dir_res;
     }
-    dir_res = fat32_add_file_entry(&global_fat_meta, &iter, &file_entry);
-    if(dir_res<0) {
-        return dir_res;
-    }
-    fat_free_dir_iterator(&iter);
 
     if(size == 0) {
         return 0;
@@ -1602,11 +1601,11 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
     }
 
     uint32_t first_cluster = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
+    uint32_t orig_size = file_entry.direntry.size;
+
     uint32_t cluster_count = first_cluster == 0 ? 0 : count_clusters(&global_fat_meta, first_cluster);
     uint32_t bytes_per_cluster = global_fat_meta.bootsector->sectors_per_cluster*global_fat_meta.bootsector->bytes_per_sector;
     uint32_t allocated_size = bytes_per_cluster * cluster_count;
-    uint32_t orig_size = file_entry.direntry.size;
-
     if(size > allocated_size) {
         uint32_t clusters_to_allocate = (size - allocated_size - 1) / bytes_per_cluster + 1;
         uint32_t first_allocated_cluster = fat32_allocate_cluster(&global_fat_meta, fat32_index_cluster_chain(&global_fat_meta, first_cluster, -1), clusters_to_allocate);
@@ -1615,8 +1614,6 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
         }
         if(first_cluster == 0) {
             first_cluster = first_allocated_cluster;
-            cluster_count += clusters_to_allocate;
-            allocated_size = bytes_per_cluster * cluster_count;
             file_entry.direntry.cluster_lo = first_allocated_cluster & 0x0000FFFF;
             file_entry.direntry.cluster_hi = first_allocated_cluster >> 16;
         }
@@ -1633,8 +1630,6 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
         if(free_res < 0) {
             return free_res;
         }
-        cluster_count -= clusters_to_free;
-        allocated_size = bytes_per_cluster * cluster_count;
         if(cluster_count == 0) {
             file_entry.direntry.cluster_lo = 0;
             file_entry.direntry.cluster_hi = 0;
@@ -1646,17 +1641,10 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
     file_entry.direntry.mtime_time = time;
     file_entry.direntry.mtime_date = date;
 
-    // Update dir entry
-    fat_dir_iterator_t iter = {.first_cluster = file_entry.dir_cluster};
-    int32_t dir_res = fat32_rm_file_entry(&global_fat_meta, &iter, &file_entry);
-    if(dir_res<0) {
+    int32_t dir_res = fat32_update_file_entry(&global_fat_meta, &file_entry);
+    if(dir_res < 0) {
         return dir_res;
     }
-    dir_res = fat32_add_file_entry(&global_fat_meta, &iter, &file_entry);
-    if(dir_res<0) {
-        return dir_res;
-    }
-    fat_free_dir_iterator(&iter);
 
     if(size == 0) {
         return 0;
@@ -1666,6 +1654,7 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
         uint8_t* zeros = malloc(size - orig_size);
         memset(zeros, 0, size - orig_size);
         int32_t write_res = fat32_write_to_offset(&global_fat_meta, first_cluster, orig_size, size - orig_size, zeros);
+        free(zeros);
         if(write_res < 0) {
             return write_res;
         }

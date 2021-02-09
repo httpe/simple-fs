@@ -1,6 +1,8 @@
 
 #include <stdint.h>
 
+#include "block_io.h"
+
 // Source: https://wiki.osdev.org/FAT
 
 typedef struct fat32_bootsector
@@ -119,6 +121,7 @@ typedef struct fat32_meta {
     fat32_bootsector_t* bootsector;
     fat32_fsinfo_t* fs_info;
     uint32_t* fat;
+	block_storage_t* storage;
 } fat32_meta_t;
 
 typedef struct fat_cluster {

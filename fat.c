@@ -127,6 +127,7 @@ int32_t fat32_get_meta(fat32_meta_t* meta)
 {
     block_storage_t* storage = meta->storage;
     
+    //TODO: Recognize MBR partitions
     uint32_t sectors_to_read = 1 + (sizeof(fat32_bootsector_t) - 1) / storage->block_size;
     uint8_t* buff = malloc(storage->block_size);
     int64_t bytes_read = storage->read_blocks(storage, buff, 0, sectors_to_read);
@@ -492,20 +493,6 @@ void trim_file_name(char* str)
     str[end - start + 1] = 0;
 }
 
-static void fat32_reset_dir_iterator(fat_dir_iterator_t* iter)
-{
-    iter->current_dir_entry_idx = 0;
-}
-
-static void fat_free_dir_iterator(fat_dir_iterator_t* iter)
-{
-    free(iter->dir_entries);
-    iter->dir_entries = NULL;
-    iter->dir_entry_count = 0;
-    iter->entry_per_cluster = 0;
-    fat32_reset_dir_iterator(iter);
-}
-
 // Convert the 8.3 filename entry to its displayed version
 static void fat_standardize_short_name(char* filename, fat32_direntry_short_t* short_entry)
 {
@@ -521,6 +508,20 @@ static void fat_standardize_short_name(char* filename, fat32_direntry_short_t* s
         // If DIR_Name[0] == 0x05, then the actual file name character for this byte is 0xE5
        filename[0] = 0xE5;
     }
+}
+
+static void fat32_reset_dir_iterator(fat_dir_iterator_t* iter)
+{
+    iter->current_dir_entry_idx = 0;
+}
+
+static void fat_free_dir_iterator(fat_dir_iterator_t* iter)
+{
+    free(iter->dir_entries);
+    iter->dir_entries = NULL;
+    iter->dir_entry_count = 0;
+    iter->entry_per_cluster = 0;
+    fat32_reset_dir_iterator(iter);
 }
 
 fat_iterate_dir_status_t fat32_iterate_dir(fat32_meta_t* meta, fat_dir_iterator_t* iter, fat32_file_entry_t* file_entry)
@@ -791,7 +792,7 @@ time_t convert_datetime(uint16_t date_entry, uint16_t time_entry) {
 	return mktime(time_info);
 }
 
-void get_timestamp(uint16_t* date_entry, uint16_t* time_entry)
+void set_timestamp(uint16_t* date_entry, uint16_t* time_entry)
 {
 	struct tm * time_info;
 	time_t raw_time;
@@ -1315,7 +1316,7 @@ static int32_t fat32_create_new(const char *path, fat32_direntry_short_t short_d
     strcpy(file_entry.filename, filename);
     file_entry.direntry = short_dir_entry;
     uint16_t date, time;
-    get_timestamp(&date, &time);
+    set_timestamp(&date, &time);
     file_entry.direntry.ctime_date = date;
     file_entry.direntry.ctime_time = time;
     file_entry.direntry.mtime_date = date;
@@ -1538,7 +1539,7 @@ static int fs_write(const char *path, const char *buf, size_t size,
     }
 
     uint16_t date, time;
-    get_timestamp(&date, &time);
+    set_timestamp(&date, &time);
     file_entry.direntry.mtime_time = time;
     file_entry.direntry.mtime_date = date;
 
@@ -1628,7 +1629,7 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
     }
     file_entry.direntry.size = size;
     uint16_t date, time;
-    get_timestamp(&date, &time);
+    set_timestamp(&date, &time);
     file_entry.direntry.mtime_time = time;
     file_entry.direntry.mtime_date = date;
 

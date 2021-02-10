@@ -251,25 +251,14 @@ static uint32_t fat32_index_cluster_chain(fat32_meta_t* meta, uint32_t cluster_n
     return cluster.next;
 }
 
-int32_t fat32_write_fs_info(fat32_meta_t* meta)
-{
-    uint32_t sectors_to_read = 1 + (sizeof(fat32_fsinfo_t) - 1) / meta->storage->block_size;
-    uint32_t bytes_written = meta->storage->write_blocks(meta->storage, meta->bootsector->fs_info_sector, sectors_to_read, (uint8_t*) meta->fs_info);
-    if(bytes_written != meta->storage->block_size*sectors_to_read) {
-        return -1;
-    } else {
-        return 0;
-    }
-}
-
-int32_t fat32_write_fat(fat32_meta_t* meta, uint32_t* new_fat)
+int32_t fat32_write_meta(fat32_meta_t* meta, fat32_meta_t* new_meta)
 {
     uint32_t fat_byte_size = meta->bootsector->table_sector_size_32*meta->bootsector->bytes_per_sector;
     // Write new FAT to main FAT and backups
     uint32_t fat_idx;
     uint32_t bytes_written;
     for(fat_idx = 0; fat_idx < meta->bootsector->table_count; fat_idx++){
-        bytes_written = meta->storage->write_blocks(meta->storage, meta->bootsector->reserved_sector_count + fat_idx*meta->bootsector->table_sector_size_32, meta->bootsector->table_sector_size_32, (uint8_t*) new_fat);
+        bytes_written = meta->storage->write_blocks(meta->storage, meta->bootsector->reserved_sector_count + fat_idx*meta->bootsector->table_sector_size_32, meta->bootsector->table_sector_size_32, (uint8_t*) new_meta->fat);
         if(bytes_written != fat_byte_size) {
             break;
         }
@@ -286,6 +275,14 @@ int32_t fat32_write_fat(fat32_meta_t* meta, uint32_t* new_fat)
         return -1;
     }
     
+    // FS Info is information only, so no rollback and return 0 even if error
+    uint32_t fsinfo_sector_size = 1 + (sizeof(fat32_fsinfo_t) - 1) / new_meta->storage->block_size;
+    bytes_written = new_meta->storage->write_blocks(new_meta->storage, new_meta->bootsector->fs_info_sector, fsinfo_sector_size, (uint8_t*) new_meta->fs_info);
+    // if(bytes_written != new_meta->storage->block_size*fsinfo_sector_size) {
+    //     return -1;
+    // }
+
+
     return 0;
 }
 
@@ -362,17 +359,14 @@ uint32_t fat32_allocate_cluster(fat32_meta_t* meta, uint32_t prev_cluster_number
         }
     }
 
-    int32_t res = fat32_write_fat(meta, new_meta.fat);
+    meta->fs_info->free_cluster_count -= allocated;
+    meta->fs_info->next_free_cluster = cluster_number; // not a free cluster, but a good place to start looking for one
+
+    int32_t res = fat32_write_meta(meta, &new_meta);
     if(res == 0) {
         // Update memory cache
         fat32_copy_meta(meta, &new_meta);
         fat32_free_meta(&new_meta);
-
-        // FS info is for information only, so even if the I/O failed, we still return success status
-        // And the cached fs_info will always be the latest version, even though it may be written to disk successfully
-        meta->fs_info->free_cluster_count -= allocated;
-        meta->fs_info->next_free_cluster = cluster_number; // not a free cluster, but a good place to start looking for one
-        res = fat32_write_fs_info(meta);
 
         return first_new_cluster_number;
     } else {
@@ -410,16 +404,13 @@ static int32_t fat32_free_cluster(fat32_meta_t* meta, uint32_t prev_cluster_numb
         cluster_freed++;
     }
 
-    int32_t res = fat32_write_fat(meta, new_meta.fat);
+    meta->fs_info->free_cluster_count += cluster_freed;
+
+    int32_t res = fat32_write_meta(meta, &new_meta);
     if(res == 0) {
         // Update memory cache
         fat32_copy_meta(meta, &new_meta);
         fat32_free_meta(&new_meta);
-
-        // FS info is for information only, so even if the I/O failed, we still return success status
-        // And the cached fs_info will always be the latest version, even though it may be written to disk successfully
-        meta->fs_info->free_cluster_count += cluster_freed;
-        res = fat32_write_fs_info(meta);
 
         return 0;
     } else {

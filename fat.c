@@ -501,6 +501,15 @@ void trim_file_name(char* str)
 static void fat_standardize_short_name(char* filename, fat32_direntry_short_t* short_entry)
 {
     memmove(filename,short_entry->name, FAT_SHORT_NAME_LEN);
+    if(filename[0] == '.') {
+        // dot entry shall have name '.' or '..'
+        if(filename[1] == '.') {
+            filename[2] = 0;
+        } else {
+            filename[1] = 0;
+        }
+        return;
+    }
     filename[FAT_SHORT_NAME_LEN] = 0;
     trim_file_name((char*)filename);
     uint32_t name_len = strlen((char*)filename);
@@ -625,7 +634,7 @@ fat_iterate_dir_status_t fat32_iterate_dir(fat32_meta_t* meta, fat_dir_iterator_
                 return FAT_DIR_ITER_FREE_ENTRY;
             }
             if(entry->short_entry.nameext[0] == 0x2E) {
-                // Entry for either "." or ".."
+                // Entry for either "." or ".." (dot is not allowed otherwise in short name)
                 return FAT_DIR_ITER_DOT_ENTRY;
             }
             if(entry->short_entry.nameext[0] == 0xE5) {
@@ -754,10 +763,6 @@ static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         iter.first_cluster = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
     }
 
-    // TODO: Shall be covered by the dot entries
-	filler(buf, ".", NULL, 0, 0);
-	filler(buf, "..", NULL, 0, 0);
-
     while(1) {
         iter_status = fat32_iterate_dir(&global_fat_meta, &iter, &file_entry);
         if(iter_status == FAT_DIR_ITER_ERROR) {
@@ -765,14 +770,14 @@ static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
             fat_free_dir_iterator(&iter);
             return -EIO;
         }
-        if(iter_status == FAT_DIR_ITER_DELETED || iter_status == FAT_DIR_ITER_DOT_ENTRY) {
+        if(iter_status == FAT_DIR_ITER_DELETED) {
             continue;
         }
         if(iter_status == FAT_DIR_ITER_NO_MORE_ENTRY || iter_status == FAT_DIR_ITER_FREE_ENTRY) {
             fat_free_dir_iterator(&iter);
             return 0;
         }
-        assert(iter_status == FAT_DIR_ITER_VALID_ENTRY);
+        assert(iter_status == FAT_DIR_ITER_VALID_ENTRY || iter_status == FAT_DIR_ITER_DOT_ENTRY);
         if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_VOLUME_ID)) {
             // Skip Volume label entry when listing directory
             continue;
@@ -830,6 +835,7 @@ static int fs_getattr(const char *path, struct stat *st,
         st->st_nlink = 2;
         uint32_t cluster_number = global_fat_meta.bootsector->root_cluster;
         st->st_size = count_clusters(&global_fat_meta, cluster_number)*bytes_per_cluster;
+        st->st_blocks = st->st_size/512;
         return 0;
     }
     if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
@@ -853,10 +859,13 @@ static int fs_getattr(const char *path, struct stat *st,
             st->st_nlink = 2;
             uint32_t cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
             st->st_size = count_clusters(&global_fat_meta, cluster_number)*bytes_per_cluster;
+            st->st_blocks = st->st_size/512;
         } else {
             st->st_mode |= S_IFREG;
             st->st_nlink = 1;
             st->st_size = file_entry.direntry.size;
+            uint32_t cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
+            st->st_blocks = count_clusters(&global_fat_meta, cluster_number)*bytes_per_cluster/512;
         }
     }
 	st->st_mtime = convert_datetime(file_entry.direntry.mtime_date, file_entry.direntry.mtime_time);
@@ -1181,6 +1190,14 @@ static int32_t fat32_add_file_entry(fat32_meta_t* meta, fat_dir_iterator_t* iter
         if(first_new_cluster == 0) {
             return -EIO;
         }
+        // Fill zeros to the new clusters 
+        uint8_t* zeros = malloc(clusters_to_alloc*cluster_byte_size);
+        memset(zeros, 0, clusters_to_alloc*cluster_byte_size);
+        int64_t write_res = fat32_write_clusters(meta, first_new_cluster, clusters_to_alloc, zeros);
+        free(zeros);
+        if(write_res < 0) {
+            return -EIO;
+        }
         fat_free_dir_iterator(iter);
     }
 
@@ -1286,7 +1303,8 @@ static int32_t fat32_rm_file_entry(fat32_meta_t* meta, fat_dir_iterator_t* iter,
     return file_entry->dir_entry_count;
 }
 
-static int32_t fat32_create_new(const char *path, fat32_direntry_short_t short_dir_entry)
+// Create new dir entry, return parent dir cluster number if success
+static int64_t fat32_create_new(const char *path, fat32_direntry_short_t* short_dir_entry)
 {
     // TODO: Test for illegal path (characters / length etc.)
     fat32_file_entry_t file_entry = {0};
@@ -1323,7 +1341,7 @@ static int32_t fat32_create_new(const char *path, fat32_direntry_short_t short_d
     filename++;
 
     strcpy(file_entry.filename, filename);
-    file_entry.direntry = short_dir_entry;
+    file_entry.direntry = *short_dir_entry;
     uint16_t date, time;
     set_timestamp(&date, &time);
     file_entry.direntry.ctime_date = date;
@@ -1332,11 +1350,13 @@ static int32_t fat32_create_new(const char *path, fat32_direntry_short_t short_d
     file_entry.direntry.mtime_time = time;
 
     int32_t res = fat32_add_file_entry(&global_fat_meta, &iter, &file_entry);
+    *short_dir_entry = file_entry.direntry;
     fat_free_dir_iterator(&iter);
     if(res < 0) {
         return res;
     }
-    return 0;
+
+    return iter.first_cluster;
 }
 
 static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
@@ -1349,8 +1369,11 @@ static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
     }
 
     fat32_direntry_short_t short_dir_entry = {0};
-    int32_t res = fat32_create_new(path, short_dir_entry);
-    return res;
+    int64_t parent_cluster = fat32_create_new(path, &short_dir_entry);
+    if(parent_cluster < 0) {
+        return -parent_cluster;
+    }
+    return 0;
 }
 
 static int fs_mkdir(const char *path, mode_t mode)
@@ -1364,10 +1387,29 @@ static int fs_mkdir(const char *path, mode_t mode)
     }
     short_dir_entry.cluster_lo = first_new_cluster & 0x0000FFFF;
     short_dir_entry.cluster_hi = first_new_cluster >> 16;
-    int32_t res = fat32_create_new(path, short_dir_entry);
-    // TODO: Add dot entries
-
-    return res;
+    int64_t parent_cluster = fat32_create_new(path, &short_dir_entry);
+    if(parent_cluster < 0) {
+        return parent_cluster;
+    }
+    
+    // Add dot entries
+    uint32_t cluster_byte_size = global_fat_meta.bootsector->bytes_per_sector*global_fat_meta.bootsector->sectors_per_cluster;
+    fat32_direntry_t* dir_buff = malloc(cluster_byte_size);
+    memset(dir_buff, 0, cluster_byte_size);
+    // Add .
+    dir_buff[0].short_entry = short_dir_entry;
+    memset(&dir_buff[0].short_entry.nameext, ' ', FAT_SHORT_NAME_LEN+FAT_SHORT_EXT_LEN);
+    dir_buff[0].short_entry.name[0] = '.';
+    // Add ..
+    dir_buff[1] = dir_buff[0];
+    dir_buff[1].short_entry.name[1] = '.';
+    dir_buff[1].short_entry.cluster_hi = parent_cluster >> 16;
+    dir_buff[1].short_entry.cluster_lo = parent_cluster & 0x0000FFFF;
+    int64_t res = fat32_write_clusters(&global_fat_meta, first_new_cluster, 1, (uint8_t*) dir_buff);
+    if(res < 0) {
+        return -EIO;
+    }
+    return 0;
 }
 
 static int fs_unlink(const char *path)
@@ -1715,19 +1757,21 @@ static int fs_rename(const char *from, const char *to, unsigned int flags)
         // Replace dir entry
         fat_dir_iterator_t iter = {.first_cluster = to_file_entry.dir_cluster};
         int32_t dir_res = fat32_rm_file_entry(&global_fat_meta, &iter, &to_file_entry);
+        fat_free_dir_iterator(&iter);
         if(dir_res<0) {
             return dir_res;
         }
     }
 
-    int32_t create_res = fat32_create_new(to, from_file_entry.direntry);
-    if(create_res < 0) {
-        return create_res;
+    int64_t parent_cluster = fat32_create_new(to, &from_file_entry.direntry);
+    if(parent_cluster < 0) {
+        return parent_cluster;
     }
 
     // Remove old dir entry
     fat_dir_iterator_t iter = {.first_cluster = from_file_entry.dir_cluster};
     int32_t dir_res = fat32_rm_file_entry(&global_fat_meta, &iter, &from_file_entry);
+    fat_free_dir_iterator(&iter);
     if(dir_res<0) {
         return dir_res;
     }
@@ -1763,9 +1807,9 @@ static int fs_open(const char *path, struct fuse_file_info *fi)
         assert(status == FAT_PATH_RESOLVE_NOT_FOUND);
         if(HAS_ATTR(fi->flags, O_CREAT)) {
             fat32_direntry_short_t short_dir_entry = {0};
-            int32_t res = fat32_create_new(path, short_dir_entry);
-            if(res < 0) {
-                return res;
+            int64_t parent_cluster = fat32_create_new(path, &short_dir_entry);
+            if(parent_cluster < 0) {
+                return parent_cluster;
             }
         }
         if(HAS_ATTR(fi->flags, O_TRUNC)) {

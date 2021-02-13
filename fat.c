@@ -14,6 +14,10 @@
 
 #define HAS_ATTR(file,attr) (((file)&(attr)) == (attr))
 
+#define FAT32_N_OPEN_FILE 100
+
+fat32_file_entry_t file_table[FAT32_N_OPEN_FILE];
+
 static fat32_meta_t global_fat_meta;
 
 /*
@@ -872,22 +876,27 @@ static int fs_read(const char *path, char *buf, size_t size, off_t offset,
     uint32_t unsigned_offset = offset;
 
     fat32_file_entry_t file_entry = {0};
-    fat_resolve_path_status_t status = fat32_resolve_path(&global_fat_meta, path, &file_entry);
+    if(fi != NULL) {
+        file_entry = file_table[fi->fh];
+        assert(file_entry.dir_entry_count > 0);
+    } else {
+        fat_resolve_path_status_t status = fat32_resolve_path(&global_fat_meta, path, &file_entry);
 
-    if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
-        return -EISDIR;
-    }
-    if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
-        return -ENOENT;
-    }
-    if(status == FAT_PATH_RESOLVE_ERROR) {
-        return -EIO;
-    }
-    if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
-        return -ENOENT;
-    }
+        if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
+            return -EISDIR;
+        }
+        if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
+            return -ENOENT;
+        }
+        if(status == FAT_PATH_RESOLVE_ERROR) {
+            return -EIO;
+        }
+        if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
+            return -ENOENT;
+        }
 
-    assert(status == FAT_PATH_RESOLVE_FOUND);
+        assert(status == FAT_PATH_RESOLVE_FOUND);
+    }
 
     if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
         return -EISDIR;
@@ -1488,29 +1497,33 @@ static int32_t fat32_update_file_entry(fat32_meta_t* meta, fat32_file_entry_t* f
 static int fs_write(const char *path, const char *buf, size_t size,
 		     off_t offset, struct fuse_file_info *fi)
 {
-    (void) fi;
-    
+
     if(offset < 0) {
         return -EINVAL;
     }
 
     fat32_file_entry_t file_entry = {0};
-    fat_resolve_path_status_t status = fat32_resolve_path(&global_fat_meta, path, &file_entry);
+    if(fi != NULL) {
+        file_entry = file_table[fi->fh];
+        assert(file_entry.dir_entry_count > 0);
+    } else {
+        fat_resolve_path_status_t status = fat32_resolve_path(&global_fat_meta, path, &file_entry);
 
-    if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
-        return -EISDIR;
-    }
-    if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
-        return -ENOENT;
-    }
-    if(status == FAT_PATH_RESOLVE_ERROR) {
-        return -EIO;
-    }
-    if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
-        return -ENOENT;
-    }
+        if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
+            return -EISDIR;
+        }
+        if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
+            return -ENOENT;
+        }
+        if(status == FAT_PATH_RESOLVE_ERROR) {
+            return -EIO;
+        }
+        if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
+            return -ENOENT;
+        }
 
-    assert(status == FAT_PATH_RESOLVE_FOUND);
+        assert(status == FAT_PATH_RESOLVE_FOUND);
+    }
 
     if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
         return -EISDIR;
@@ -1566,22 +1579,27 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
     (void) fi;
     
     fat32_file_entry_t file_entry = {0};
-    fat_resolve_path_status_t status = fat32_resolve_path(&global_fat_meta, path, &file_entry);
+    if(fi != NULL) {
+        file_entry = file_table[fi->fh];
+        assert(file_entry.dir_entry_count > 0);
+    } else {
+        fat_resolve_path_status_t status = fat32_resolve_path(&global_fat_meta, path, &file_entry);
 
-    if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
-        return -EISDIR;
-    }
-    if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
-        return -ENOENT;
-    }
-    if(status == FAT_PATH_RESOLVE_ERROR) {
-        return -EIO;
-    }
-    if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
-        return -ENOENT;
-    }
+        if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
+            return -EISDIR;
+        }
+        if(status == FAT_PATH_RESOLVE_INVALID_PATH) {
+            return -ENOENT;
+        }
+        if(status == FAT_PATH_RESOLVE_ERROR) {
+            return -EIO;
+        }
+        if(status == FAT_PATH_RESOLVE_NOT_FOUND) {
+            return -ENOENT;
+        }
 
-    assert(status == FAT_PATH_RESOLVE_FOUND);
+        assert(status == FAT_PATH_RESOLVE_FOUND);
+    }
 
     if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
         return -EISDIR;
@@ -1719,7 +1737,7 @@ static int fs_rename(const char *from, const char *to, unsigned int flags)
 
 static int fs_open(const char *path, struct fuse_file_info *fi)
 {
-    (void) fi;
+
 
     fat32_file_entry_t file_entry = {0};
     fat_resolve_path_status_t status = fat32_resolve_path(&global_fat_meta, path, &file_entry);
@@ -1741,23 +1759,40 @@ static int fs_open(const char *path, struct fuse_file_info *fi)
             // O_EXCL Ensure that this call creates the file
             return -EEXIST;
         }
-        // Do nothing
-        return 0;
-    }
-    assert(status == FAT_PATH_RESOLVE_NOT_FOUND);
-    if(HAS_ATTR(fi->flags, O_CREAT)) {
-        fat32_direntry_short_t short_dir_entry = {0};
-        int32_t res = fat32_create_new(path, short_dir_entry);
-        if(res < 0) {
-            return res;
+    } else {
+        assert(status == FAT_PATH_RESOLVE_NOT_FOUND);
+        if(HAS_ATTR(fi->flags, O_CREAT)) {
+            fat32_direntry_short_t short_dir_entry = {0};
+            int32_t res = fat32_create_new(path, short_dir_entry);
+            if(res < 0) {
+                return res;
+            }
         }
-    }
-    if(HAS_ATTR(fi->flags, O_TRUNC)) {
-        int32_t res = fs_truncate(path, 0, fi);
-        if(res < 0) {
-            return res;
+        if(HAS_ATTR(fi->flags, O_TRUNC)) {
+            int32_t res = fs_truncate(path, 0, fi);
+            if(res < 0) {
+                return res;
+            }
         }
+        status = fat32_resolve_path(&global_fat_meta, path, &file_entry);
+        assert(status == FAT_PATH_RESOLVE_FOUND);
     }
+    
+    // Save the resolved file entry to the file table
+    //   in order to reuse the path resolution result
+    assert(file_entry.dir_entry_count > 0);
+    uint32_t i;
+    for(i=0; i<FAT32_N_OPEN_FILE; i++) {
+        if(file_table[i].dir_entry_count == 0) {
+            file_table[i] = file_entry;
+            break;
+        }
+        if(i == FAT32_N_OPEN_FILE-1) {
+            return -ENFILE;
+        } 
+    }
+    // Set FUSE file handle
+    fi->fh = i;
 
 	return 0;
 }
@@ -1766,7 +1801,10 @@ static int fs_release(const char *path, struct fuse_file_info *fi)
 {
 	(void) path;
     (void) fi;
-    // Do nothing
+
+    assert(file_table[fi->fh].dir_entry_count > 0);
+    // Clear file table entry
+    memset(&file_table[fi->fh], 0, sizeof(fat32_file_entry_t));
 
 	return 0;
 }

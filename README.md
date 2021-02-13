@@ -88,6 +88,8 @@ File system is a rather complicated component of the operating system, so we wil
 
 1. Implement the actual targeted file system, like FAT32 ([OsDev]((https://wiki.osdev.org/FAT32)), [Wiki](https://en.wikipedia.org/wiki/Design_of_the_FAT_file_system)) or [Ext2](https://wiki.osdev.org/Ext2) in FUSE, through the block I/O API.
 
+1. (Optional) Implement a formatting tool to create disk image of the targeted file system with the our own bootloader from simple-os project.
+
 1. Implement the block I/O API in our system through [ATA (PIO)](https://wiki.osdev.org/ATA_PIO_Mode) operations.
 
 1. (Optional) Implement block level I/O buffer cache. (Ref [Xv6/bio.c]( https://github.com/mit-pdos/xv6-public/blob/master/bio.c))

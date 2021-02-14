@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <time.h>
 #include <stdbool.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "fat.h"
 
@@ -29,8 +31,9 @@ static fat32_meta_t global_fat_meta;
  */
 static struct options {
 	const char *image_path;
-	int show_help;
     int mkfs;
+    const char *mkfs_bootloader_path;
+	int show_help;
 } options;
 
 #define OPTION(t, p)                           \
@@ -39,6 +42,7 @@ static struct options {
 static const struct fuse_opt option_spec[] = {
 	OPTION("--image_path=%s", image_path),
     OPTION("--mkfs", mkfs),
+    OPTION("--mkfs_bootloader_path=%s", mkfs_bootloader_path),
 	OPTION("-h", show_help),
 	OPTION("--help", show_help),
 	FUSE_OPT_END
@@ -135,10 +139,26 @@ int32_t fat32_get_meta(fat32_meta_t* meta)
     
     //TODO: Recognize MBR partitions
     uint32_t sectors_to_read = 1 + (sizeof(fat32_bootsector_t) - 1) / storage->block_size;
-    uint8_t* buff = malloc(storage->block_size);
+    uint8_t* buff = malloc(sectors_to_read*storage->block_size);
     int64_t bytes_read = storage->read_blocks(storage, buff, 0, sectors_to_read);
     if(bytes_read != storage->block_size*sectors_to_read) {
-        return -1;
+        goto free_buff;
+    }
+    uint32_t partition_start_lba = 0;
+    mbr_partition_table_entry_t* partition_table = (mbr_partition_table_entry_t*) &buff[0x1BE];
+    for(int i=0;i<4;i++) {
+        if(partition_table[i].driver_attributes == 0x80 && partition_table[i].partition_type == 0x0C) {
+            if(partition_table[i].LBA_partition_start > 0 && partition_table[i].partition_sector_count>0) {
+                // an Active & FAT32 partition found
+                partition_start_lba = partition_table[i].LBA_partition_start;
+                memset(buff, 0, sectors_to_read*storage->block_size);
+                bytes_read = storage->read_blocks(storage, buff, partition_start_lba, sectors_to_read);
+                if(bytes_read != storage->block_size*sectors_to_read) {
+                    goto free_buff;
+                }
+                break;
+            }
+        }
     }
 
     meta->bootsector = malloc(sizeof(fat32_bootsector_t));
@@ -148,15 +168,16 @@ int32_t fat32_get_meta(fat32_meta_t* meta)
     good = good & (meta->bootsector->mbr_signature == 0xAA55); // ensure MBR magic number
     good = good & (meta->bootsector->bytes_per_sector ==  storage->block_size); // ensure sector size
     good = good & (meta->bootsector->root_entry_count == 0); // ensure is FAT32 not FAT12/16
-    good = good & (meta->bootsector->boot_signature == 0x29); // ensure FAT32 signature
+    good = good & (meta->bootsector->boot_signature == 0x29); // ensure FAT signature
+    good = good & (meta->bootsector->hidden_sector_count == partition_start_lba); // make sure it conforms the partition table
     // we assume cluster number is in the range of int32_t, check it here
     good = good & (meta->bootsector->total_sectors_32 / meta->bootsector->sectors_per_cluster < 0x7FFFFFFF); 
     if(!good){
-        return -1;
+        goto free_bootsector;
     }
     // Read FS Info
     sectors_to_read = 1 + (sizeof(fat32_fsinfo_t) - 1) / storage->block_size;
-    bytes_read = storage->read_blocks(storage, buff, meta->bootsector->fs_info_sector, sectors_to_read);
+    bytes_read = storage->read_blocks(storage, buff, meta->bootsector->hidden_sector_count + meta->bootsector->fs_info_sector, sectors_to_read);
     if(bytes_read != storage->block_size*sectors_to_read) {
         return -1;
     }
@@ -166,36 +187,51 @@ int32_t fat32_get_meta(fat32_meta_t* meta)
     good = good & (meta->fs_info->structure_signature == 0x61417272);
     good = good & (meta->fs_info->trailing_signature ==  0xAA550000);
     if(!good){
-        return -1;
+        goto free_fs_info;
     }
     // Read FAT
     if(meta->bootsector->table_count == 0) {
-        return -1;
+        goto free_fs_info;
     }
     uint32_t fat_byte_size = meta->bootsector->table_sector_size_32 * meta->bootsector->bytes_per_sector;
     meta->fat = malloc(fat_byte_size);
-    bytes_read = storage->read_blocks(storage, (uint8_t*) meta->fat, meta->bootsector->reserved_sector_count, meta->bootsector->table_sector_size_32);
+    bytes_read = storage->read_blocks(storage, (uint8_t*) meta->fat, meta->bootsector->hidden_sector_count +  meta->bootsector->reserved_sector_count, meta->bootsector->table_sector_size_32);
     if(bytes_read != fat_byte_size) {
-        return -1;
+        goto free_fat;
     }
     good = good & ((meta->fat[0] & 0x0FFFFFFF) >= 0x0FFFFFF0) & ((meta->fat[0] & 0x0FFFFFFF) <= 0x0FFFFFFF); // check cluster 0 (FAT ID)
     good = good & ((meta->fat[1] & 0x0FFFFFFF) == 0x0FFFFFFF); // check cluster 1 (End of Cluster Mark)
     if(!good){
-        return -1;
+        goto free_fat;
     }
     // Ensure all FAT are the same
     uint32_t* alternative_fat = malloc(fat_byte_size);
     for(uint32_t fat_idx = 1; fat_idx < meta->bootsector->table_count; fat_idx++){
-        bytes_read = storage->read_blocks(storage, (uint8_t*) alternative_fat, meta->bootsector->reserved_sector_count + fat_idx*meta->bootsector->table_sector_size_32, meta->bootsector->table_sector_size_32);
+        bytes_read = storage->read_blocks(storage, (uint8_t*) alternative_fat, meta->bootsector->hidden_sector_count + meta->bootsector->reserved_sector_count + fat_idx*meta->bootsector->table_sector_size_32, meta->bootsector->table_sector_size_32);
         if(bytes_read != fat_byte_size) {
-            return -1;
+            goto free_alternative_fat;
         }
         if(memcmp(alternative_fat, meta->fat, fat_byte_size) != 0) {
-            return -1;
+            goto free_alternative_fat;
         }
     }
 
     return 0;
+
+free_alternative_fat:
+    free(alternative_fat);
+free_fat:
+    free(meta->fat);
+free_fs_info:
+    free(meta->fs_info);
+free_bootsector:
+    free(meta->bootsector);
+free_buff:
+    free(buff);
+
+return -1;
+
+
 }
 
 fat_cluster_status_t fat32_get_cluster_info(fat32_meta_t* meta, uint32_t cluster_number, fat_cluster_t* cluster)
@@ -265,7 +301,8 @@ int32_t fat32_write_meta(fat32_meta_t* meta, fat32_meta_t* new_meta)
     uint32_t fat_idx;
     uint32_t bytes_written;
     for(fat_idx = 0; fat_idx < meta->bootsector->table_count; fat_idx++){
-        bytes_written = meta->storage->write_blocks(meta->storage, meta->bootsector->reserved_sector_count + fat_idx*meta->bootsector->table_sector_size_32, meta->bootsector->table_sector_size_32, (uint8_t*) new_meta->fat);
+        uint32_t lba = meta->bootsector->hidden_sector_count + meta->bootsector->reserved_sector_count + fat_idx*meta->bootsector->table_sector_size_32;
+        bytes_written = meta->storage->write_blocks(meta->storage, lba, meta->bootsector->table_sector_size_32, (uint8_t*) new_meta->fat);
         if(bytes_written != fat_byte_size) {
             break;
         }
@@ -275,7 +312,8 @@ int32_t fat32_write_meta(fat32_meta_t* meta, fat32_meta_t* new_meta)
         // FAT corrupted!
         // Try restore back to the original FAT
         for(uint32_t fat_idx_recover = 0; fat_idx_recover <= fat_idx; fat_idx_recover++){
-            bytes_written = meta->storage->write_blocks(meta->storage, meta->bootsector->reserved_sector_count + fat_idx_recover*meta->bootsector->table_sector_size_32, meta->bootsector->table_sector_size_32, (uint8_t*) meta->fat);
+            uint32_t lba = meta->bootsector->hidden_sector_count + meta->bootsector->reserved_sector_count + fat_idx_recover*meta->bootsector->table_sector_size_32;
+            bytes_written = meta->storage->write_blocks(meta->storage, lba, meta->bootsector->table_sector_size_32, (uint8_t*) meta->fat);
             // If recover attempt failed, panic
             assert(bytes_written != fat_byte_size);
         }
@@ -284,7 +322,7 @@ int32_t fat32_write_meta(fat32_meta_t* meta, fat32_meta_t* new_meta)
     
     // FS Info is information only, so no rollback and return 0 even if error
     uint32_t fsinfo_sector_size = 1 + (sizeof(fat32_fsinfo_t) - 1) / new_meta->storage->block_size;
-    bytes_written = new_meta->storage->write_blocks(new_meta->storage, new_meta->bootsector->fs_info_sector, fsinfo_sector_size, (uint8_t*) new_meta->fs_info);
+    bytes_written = new_meta->storage->write_blocks(new_meta->storage, meta->bootsector->hidden_sector_count + new_meta->bootsector->fs_info_sector, fsinfo_sector_size, (uint8_t*) new_meta->fs_info);
     // if(bytes_written != new_meta->storage->block_size*fsinfo_sector_size) {
     //     return -1;
     // }
@@ -444,7 +482,7 @@ int64_t fat32_read_clusters(fat32_meta_t* meta, uint32_t cluster_number, uint32_
         fat_cluster_status_t status = fat32_get_cluster_info(meta, cluster.next, &cluster);
         assert(status == FAT_CLUSTER_USED || (status == FAT_CLUSTER_EOC && i == clusters_to_read-1));
         // the cluster 0 and 1 are not of size sectors_per_cluster
-        uint32_t lba = meta->bootsector->reserved_sector_count + meta->bootsector->table_sector_size_32*meta->bootsector->table_count + (cluster.curr-2)*meta->bootsector->sectors_per_cluster;
+        uint32_t lba = meta->bootsector->hidden_sector_count + meta->bootsector->reserved_sector_count + meta->bootsector->table_sector_size_32*meta->bootsector->table_count + (cluster.curr-2)*meta->bootsector->sectors_per_cluster;
         int64_t bytes_read = meta->storage->read_blocks(meta->storage, buff, lba, meta->bootsector->sectors_per_cluster);
         if(bytes_read < 0) {
             return -errno;
@@ -469,7 +507,7 @@ int64_t fat32_write_clusters(fat32_meta_t* meta, uint32_t cluster_number, uint32
         fat_cluster_status_t status = fat32_get_cluster_info(meta, cluster.next, &cluster);
         assert(status == FAT_CLUSTER_USED || (status == FAT_CLUSTER_EOC && i == clusters_to_write-1));
         // the cluster 0 and 1 are not of size sectors_per_cluster
-        uint32_t lba = meta->bootsector->reserved_sector_count + meta->bootsector->table_sector_size_32*meta->bootsector->table_count + (cluster.curr-2)*meta->bootsector->sectors_per_cluster;
+        uint32_t lba = meta->bootsector->hidden_sector_count + meta->bootsector->reserved_sector_count + meta->bootsector->table_sector_size_32*meta->bootsector->table_count + (cluster.curr-2)*meta->bootsector->sectors_per_cluster;
         int64_t bytes_written = meta->storage->write_blocks(meta->storage, lba, meta->bootsector->sectors_per_cluster, buff);
         if(bytes_written < 0) {
             return -errno;
@@ -1861,14 +1899,61 @@ static int fs_release(const char *path, struct fuse_file_info *fi)
 	return 0;
 }
 
-int32_t fat32_mkfs(block_storage_t* storage)
+int32_t fat32_mkfs(block_storage_t* storage, const char* bootloader_path)
 {
+    uint32_t bootloader_sector_count = 0;
+    
+    if(bootloader_path != NULL && strlen(bootloader_path)>0) {
+        int fd = open(bootloader_path, O_RDONLY);
+        if(fd == -1) {
+            return -errno;
+        }
+        off_t off = lseek(fd, 0, SEEK_END);
+        if(off == (off_t) -1) {
+            return -errno;
+        }
+        bootloader_sector_count = (off + (storage->block_size - 1)) / storage->block_size;
+        uint8_t* bootloader = malloc(bootloader_sector_count*storage->block_size);
+        memset(bootloader, 0, bootloader_sector_count*storage->block_size);
+        ssize_t bytes_read = pread(fd, bootloader, off, 0);
+        if(bytes_read == -1) {
+            return -errno;
+        }
+        if(!(bootloader[510]==0x55 && bootloader[511]==0xAA)) {
+            // not a valid MBR bootloader
+            return -1;
+        }
+        // Verify the MBR partition table is empty
+        for(int i=0x1BE;i<0x1EE;i++) {
+            if(bootloader[i] != 0) {
+                return -1;
+            }
+        }
+
+        mbr_partition_table_entry_t* first_partition_entry = (mbr_partition_table_entry_t*) &bootloader[0x1BE];
+        *first_partition_entry = (mbr_partition_table_entry_t) {
+            .driver_attributes = 0x80, // active / bootable
+            .CHS_partition_start = {0}, // CHS not filled
+            .partition_type = 0x0C, // 0C: WIN95 OSR2 FAT32, LBA-mapped
+            .CHS_partition_end = {0}, // CHS not filled
+            .LBA_partition_start = bootloader_sector_count,
+            .partition_sector_count = storage->block_count - bootloader_sector_count,
+        };
+
+        // Write MBR and bootloader
+        int64_t res = storage->write_blocks(storage, 0, bootloader_sector_count, (uint8_t*) bootloader);
+        free(bootloader);
+        if(res < 0) {
+            return -errno;
+        }
+    }
+
     uint16_t date, time;
     set_timestamp(&date, &time);
 
     fat32_bootsector_t boot = {
         .bootjmp = {0xE9, 0x57, 0x00}, // jmp to the begining of boot_code
-        .oem_name = "mkdosfs ",
+        .oem_name = "SimpleFS",
         .bytes_per_sector = storage->block_size,
         .sectors_per_cluster = 8,
         .reserved_sector_count = 32,
@@ -1879,8 +1964,8 @@ int32_t fat32_mkfs(block_storage_t* storage)
         .table_sector_size_16 = 0,
         .sectors_per_track = 0,
         .head_side_count = 0,
-        .hidden_sector_count = 0, // not partitioned
-        .total_sectors_32 = storage->block_count,
+        .hidden_sector_count = bootloader_sector_count, // partitioned
+        .total_sectors_32 = storage->block_count - bootloader_sector_count,
         .table_sector_size_32 = 0, // fill it later
         .extended_flags = 0, // all FATs are mirrored at runtime
         .fat_version = 0,
@@ -1931,49 +2016,44 @@ int32_t fat32_mkfs(block_storage_t* storage)
         .mtime_time = time,
         .mtime_date = date,
     };
-    // Write bootsector
-    int64_t res = storage->write_blocks(storage, 0, 1, (uint8_t*) &boot);
+
+    // Write FAT partition bootsector
+    int64_t res = storage->write_blocks(storage, boot.hidden_sector_count, 1, (uint8_t*) &boot);
     if(res < 0) {
-        free(fat);
-        free(root_dir);
-        return -1;
+        goto free_and_error;
     }
     // Write backup bootsector
-    res = storage->write_blocks(storage, 6, 1, (uint8_t*) &boot);
+    res = storage->write_blocks(storage, boot.hidden_sector_count + 6, 1, (uint8_t*) &boot);
     if(res < 0) {
-        free(fat);
-        free(root_dir);
-        return -1;
+        goto free_and_error;
     }
     // Write FSInfo
-    res = storage->write_blocks(storage, 1, 1, (uint8_t*) &info);
+    res = storage->write_blocks(storage, boot.hidden_sector_count + 1, 1, (uint8_t*) &info);
     if(res < 0) {
-        free(fat);
-        free(root_dir);
-        return -1;
+        goto free_and_error;
     }
     // Write FAT
-    res = storage->write_blocks(storage, boot.reserved_sector_count, boot.table_sector_size_32, (uint8_t*) fat);
+    res = storage->write_blocks(storage, boot.hidden_sector_count + boot.reserved_sector_count, boot.table_sector_size_32, (uint8_t*) fat);
     if(res < 0) {
-        free(fat);
-        free(root_dir);
-        return -1;
+        goto free_and_error;
     }
     // Write backup FAT
-    res = storage->write_blocks(storage, boot.reserved_sector_count + boot.table_sector_size_32, boot.table_sector_size_32, (uint8_t*) fat);
+    res = storage->write_blocks(storage, boot.hidden_sector_count + boot.reserved_sector_count + boot.table_sector_size_32, boot.table_sector_size_32, (uint8_t*) fat);
     if(res < 0) {
-        free(fat);
-        free(root_dir);
-        return -1;
+        goto free_and_error;
     }
     // Write root dir
-    res = storage->write_blocks(storage, boot.reserved_sector_count + 2*boot.table_sector_size_32, boot.sectors_per_cluster, (uint8_t*) root_dir);
+    res = storage->write_blocks(storage, boot.hidden_sector_count + boot.reserved_sector_count + 2*boot.table_sector_size_32, boot.sectors_per_cluster, (uint8_t*) root_dir);
     if(res < 0) {
-        free(fat);
-        free(root_dir);
-        return -1;
+        goto free_and_error;
     }
+
     return 0;
+
+free_and_error:
+    free(fat);
+    free(root_dir);
+    return -1;
 }
 
 //Ref: https://libfuse.github.io/doxygen/structfuse__operations.html
@@ -1997,9 +2077,10 @@ static void show_help(const char *progname)
 {
 	printf("usage: %s [options] <mountpoint>\n\n", progname);
 	printf("File-system specific options:\n"
-	       "    --image_path=<s>    Path to the file system disk image file\n"
-	       "                        (default \"fat32_fs_image.fat\")\n"
-	       "    --mkfs              Format the disk image to FAT32\n"
+	       "    --image_path=<s>        Path to the file system disk image file\n"
+	       "                            (default \"fat32_fs_image.fat\")\n"
+	       "    --mkfs                  Format the disk image to FAT32\n"
+	       "    --mkfs_bootloader_path=<s>   Path to a bootloader to prepend before the mkfs FAT partition\n"
 	       "\n");
 }
 
@@ -2012,6 +2093,7 @@ int main(int argc, char *argv[])
 	   fuse_opt_parse can free the defaults if other
 	   values are specified */
 	options.image_path = strdup("fat32_fs_image.fat");
+    options.mkfs_bootloader_path = strdup("");
 
 	/* Parse options */
 	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
@@ -2028,7 +2110,7 @@ int main(int argc, char *argv[])
 
     if(options.mkfs) {
         printf("Formatting FAT32 file system...\n");
-        int32_t res = fat32_mkfs(global_fat_meta.storage);
+        int32_t res = fat32_mkfs(global_fat_meta.storage, options.mkfs_bootloader_path);
         if(res < 0) {
             printf("Create FS failed: %d\n", res);
             exit(1);

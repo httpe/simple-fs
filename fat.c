@@ -30,6 +30,7 @@ static fat32_meta_t global_fat_meta;
 static struct options {
 	const char *image_path;
 	int show_help;
+    int mkfs;
 } options;
 
 #define OPTION(t, p)                           \
@@ -37,6 +38,7 @@ static struct options {
 
 static const struct fuse_opt option_spec[] = {
 	OPTION("--image_path=%s", image_path),
+    OPTION("--mkfs", mkfs),
 	OPTION("-h", show_help),
 	OPTION("--help", show_help),
 	FUSE_OPT_END
@@ -332,7 +334,7 @@ uint32_t fat32_allocate_cluster(fat32_meta_t* meta, uint32_t prev_cluster_number
         cluster_number = 2;
     }
     uint32_t cluster_number_first_tried = cluster_number;
-    uint32_t max_cluster_number = meta->bootsector->total_sectors_32 / meta->bootsector->sectors_per_cluster - 1;
+    uint32_t max_cluster_number = meta->bootsector->table_sector_size_32 / 4 - 1;
     uint32_t allocated = 0, first_new_cluster_number = 0;
     
     fat32_meta_t new_meta = {0};
@@ -360,11 +362,14 @@ uint32_t fat32_allocate_cluster(fat32_meta_t* meta, uint32_t prev_cluster_number
         }
         if(cluster_number == cluster_number_first_tried && allocated < cluster_count_to_allocate) {
             // all FAT entries tested, no free entry, disk is full
+            fat32_free_meta(&new_meta);
             return 0;
         }
     }
 
-    meta->fs_info->free_cluster_count -= allocated;
+    if(meta->fs_info->free_cluster_count != 0xFFFFFFFF) {
+        meta->fs_info->free_cluster_count -= allocated;
+    }
     meta->fs_info->next_free_cluster = cluster_number; // not a free cluster, but a good place to start looking for one
 
     int32_t res = fat32_write_meta(meta, &new_meta);
@@ -409,7 +414,9 @@ static int32_t fat32_free_cluster(fat32_meta_t* meta, uint32_t prev_cluster_numb
         cluster_freed++;
     }
 
-    meta->fs_info->free_cluster_count += cluster_freed;
+    if(meta->fs_info->free_cluster_count != 0xFFFFFFFF) {
+        meta->fs_info->free_cluster_count += cluster_freed;
+    }
 
     int32_t res = fat32_write_meta(meta, &new_meta);
     if(res == 0) {
@@ -1703,6 +1710,7 @@ static int fs_truncate(const char *path, off_t size, struct fuse_file_info *fi)
     }
 
     if(size > orig_size) {
+        // Zero out the allocated space
         uint8_t* zeros = malloc(size - orig_size);
         memset(zeros, 0, size - orig_size);
         int32_t write_res = fat32_write_to_offset(&global_fat_meta, first_cluster, orig_size, size - orig_size, zeros);
@@ -1853,7 +1861,120 @@ static int fs_release(const char *path, struct fuse_file_info *fi)
 	return 0;
 }
 
+int32_t fat32_mkfs(block_storage_t* storage)
+{
+    uint16_t date, time;
+    set_timestamp(&date, &time);
 
+    fat32_bootsector_t boot = {
+        .bootjmp = {0xE9, 0x57, 0x00}, // jmp to the begining of boot_code
+        .oem_name = "mkdosfs ",
+        .bytes_per_sector = storage->block_size,
+        .sectors_per_cluster = 8,
+        .reserved_sector_count = 32,
+        .table_count = 2,
+        .root_entry_count = 0,
+        .total_sectors_16 = 0,
+        .media_type = 0xF8, // "fixed" (non-removable) media
+        .table_sector_size_16 = 0,
+        .sectors_per_track = 0,
+        .head_side_count = 0,
+        .hidden_sector_count = 0, // not partitioned
+        .total_sectors_32 = storage->block_count,
+        .table_sector_size_32 = 0, // fill it later
+        .extended_flags = 0, // all FATs are mirrored at runtime
+        .fat_version = 0,
+        .root_cluster = 2,
+        .fs_info_sector = 1,
+        .backup_BS_sector = 6,
+        .reserved_0 = {0},
+        .drive_number = 0x80, // hda: 0x80
+        .reserved_1 = 0,
+        .boot_signature = 0x29,
+        .volume_id = (date << 16) + time,
+        .volume_label = "NO NAME    ",
+        .fat_type_label = "FAT32   ",
+        .boot_code = {0},
+        .mbr_signature = 0xAA55,
+    };
+
+    // Ref: http://board.flatassembler.net/topic.php?t=12680
+    uint32_t table_size_numerator = boot.total_sectors_32 - boot.reserved_sector_count + 2*boot.sectors_per_cluster;
+    uint32_t table_size_denominator = (2 + boot.bytes_per_sector/4*boot.sectors_per_cluster);
+    boot.table_sector_size_32 =  table_size_numerator / table_size_denominator;
+    if(table_size_numerator % table_size_denominator != 0) {
+        // round up
+        boot.table_sector_size_32++;
+    }
+
+    fat32_fsinfo_t info = {
+        .lead_signature = 0x41615252,
+        .reserved = {0},
+        .structure_signature = 0x61417272,
+        .free_cluster_count = boot.table_sector_size_32 * boot.bytes_per_sector / 4 - 2 - 1, // first two are reserved, cluster 2 is root dir
+        .next_free_cluster = 3,
+        .reserved2 = {0},
+        .trailing_signature = 0xAA550000
+    };
+
+    uint32_t* fat = malloc(boot.table_sector_size_32 * boot.bytes_per_sector);
+    fat[0] = boot.media_type | 0x0FFFFF00; // FAT ID
+    fat[1] = 0x0FFFFFFF; // EOC mark
+    fat[2] = 0x0FFFFFFF; // EOC mark of the root dir
+
+    fat32_direntry_short_t* root_dir = malloc(boot.sectors_per_cluster*boot.bytes_per_sector);
+    root_dir[0] = (fat32_direntry_short_t) {
+        .nameext = "NO NAME    ",
+        .attr = FAT_ATTR_VOLUME_ID,
+        .ctime_time = time,
+        .ctime_date = date,
+        .mtime_time = time,
+        .mtime_date = date,
+    };
+    // Write bootsector
+    int64_t res = storage->write_blocks(storage, 0, 1, (uint8_t*) &boot);
+    if(res < 0) {
+        free(fat);
+        free(root_dir);
+        return -1;
+    }
+    // Write backup bootsector
+    res = storage->write_blocks(storage, 6, 1, (uint8_t*) &boot);
+    if(res < 0) {
+        free(fat);
+        free(root_dir);
+        return -1;
+    }
+    // Write FSInfo
+    res = storage->write_blocks(storage, 1, 1, (uint8_t*) &info);
+    if(res < 0) {
+        free(fat);
+        free(root_dir);
+        return -1;
+    }
+    // Write FAT
+    res = storage->write_blocks(storage, boot.reserved_sector_count, boot.table_sector_size_32, (uint8_t*) fat);
+    if(res < 0) {
+        free(fat);
+        free(root_dir);
+        return -1;
+    }
+    // Write backup FAT
+    res = storage->write_blocks(storage, boot.reserved_sector_count + boot.table_sector_size_32, boot.table_sector_size_32, (uint8_t*) fat);
+    if(res < 0) {
+        free(fat);
+        free(root_dir);
+        return -1;
+    }
+    // Write root dir
+    res = storage->write_blocks(storage, boot.reserved_sector_count + 2*boot.table_sector_size_32, boot.sectors_per_cluster, (uint8_t*) root_dir);
+    if(res < 0) {
+        free(fat);
+        free(root_dir);
+        return -1;
+    }
+    return 0;
+}
 
 //Ref: https://libfuse.github.io/doxygen/structfuse__operations.html
 static const struct fuse_operations fs_oper = {
@@ -1877,7 +1998,8 @@ static void show_help(const char *progname)
 	printf("usage: %s [options] <mountpoint>\n\n", progname);
 	printf("File-system specific options:\n"
 	       "    --image_path=<s>    Path to the file system disk image file\n"
-	       "                        (default \"fat32_fs_image.bin\")\n"
+	       "                        (default \"fat32_fs_image.fat\")\n"
+	       "    --mkfs              Format the disk image to FAT32\n"
 	       "\n");
 }
 
@@ -1889,7 +2011,7 @@ int main(int argc, char *argv[])
 	/* Set defaults -- we have to use strdup so that
 	   fuse_opt_parse can free the defaults if other
 	   values are specified */
-	options.image_path = strdup("fat32_fs_image.bin");
+	options.image_path = strdup("fat32_fs_image.fat");
 
 	/* Parse options */
 	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
@@ -1904,11 +2026,14 @@ int main(int argc, char *argv[])
     // Assume to use first block storage
     global_fat_meta.storage = get_block_storage(0);
 
-    // res = create_fs();
-    // if(res < 0) {
-    //     printf("Create FS failed: %d\n", res);
-    //     exit(1);
-    // }
+    if(options.mkfs) {
+        printf("Formatting FAT32 file system...\n");
+        int32_t res = fat32_mkfs(global_fat_meta.storage);
+        if(res < 0) {
+            printf("Create FS failed: %d\n", res);
+            exit(1);
+        }
+    }
 
     // Read header
     res = fat32_get_meta(&global_fat_meta);

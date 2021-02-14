@@ -12,7 +12,9 @@
 
 #include "block_io.h"
 
-#define BLOCK_COUNT 64
+// If image does not exist, create image of size 512MiB
+#define BLOCK_COUNT (1 << 20)
+
 #define BLOCK_SIZE 512
 #define MAX_STORAGE_DEV_COUNT 8
 
@@ -56,11 +58,10 @@ block_storage_t* initialize_disk_image(const char* image_path)
     uint32_t image_size;
     // Create disk image if not exist
     if(access(image_path, F_OK) != 0) {
-        char buff[BLOCK_SIZE*BLOCK_COUNT] = {0};
         int fd = open(image_path, O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR);
-        int written = write(fd, buff, BLOCK_SIZE*BLOCK_COUNT);
+        int res = ftruncate(fd, BLOCK_COUNT*BLOCK_SIZE);
         close(fd);
-        if(written < BLOCK_SIZE*BLOCK_COUNT) {
+        if(res < 0) {
             return NULL;
         }
         image_size = BLOCK_SIZE*BLOCK_COUNT;

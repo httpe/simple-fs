@@ -5,6 +5,7 @@ LIBS:=$(LIBS) -lfuse3 -lpthread
 
 SHARED_OBJS=\
 block_io.o \
+time.o \
 
 SIMPLE_FS_OBJS=\
 simple_fs_block.o \

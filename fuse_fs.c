@@ -52,25 +52,30 @@ struct fs_dir_filler_info {
     fuse_fill_dir_t filler;
 };
 
+time_t datetime2ts(date_time dt) {
+	struct tm * time_info;
+	time_t raw_time;
+
+	time(&raw_time);
+	time_info = localtime(&raw_time);
+	time_info->tm_sec = dt.tm_sec;
+	time_info->tm_min = dt.tm_min;
+	time_info->tm_hour = dt.tm_hour;
+	time_info->tm_mday = dt.tm_mday;
+	time_info->tm_mon = dt.tm_mon;
+	time_info->tm_year = dt.tm_year;
+	return mktime(time_info);
+}
+
 void fs_stat2stat(const fs_stat* fs_st, struct stat* st)
 {
     // memset(st, 0, sizeof(*st));
     st->st_nlink = fs_st->nlink; 
     st->st_size=fs_st->size; 
-    st->st_mtim.tv_sec = fs_st->mtime; 
-    st->st_ctim.tv_sec = fs_st->ctime;
+    st->st_mtim.tv_sec = datetime2ts(fs_st->mtime); 
+    st->st_ctim.tv_sec = datetime2ts(fs_st->ctime);
     st->st_blocks = fs_st->blocks;
     st->st_mode = fs_st->mode;
-}
-void stat2fs_stat(const struct stat* st, fs_stat* fs_st)
-{
-    // memset(fs_st, 0, sizeof(*fs_st));
-    fs_st->nlink = st->st_nlink; 
-    fs_st->size=st->st_size; 
-    fs_st->mtime = st->st_mtim.tv_sec; 
-    fs_st->ctime = st->st_ctim.tv_sec;
-    fs_st->blocks = st->st_blocks;
-    fs_st->mode = st->st_mode;
 }
 
 static int dir_filler(fs_dir_filler_info* info, const char *name, const struct fs_stat* fs_st)
@@ -123,7 +128,6 @@ static int fs_getattr(const char *path, struct stat *st,
 {
     fs_file_info fs_fi = {0};
     fs_stat fs_st = {0};
-    stat2fs_stat(st, &fs_st);
     int res = mount_point.operations.getattr(&mount_point, path, &fs_st, fuse_fi2fs_fi(fi, &fs_fi));
     fs_stat2stat(&fs_st, st);
     fs_fi2fuse_fi(&fs_fi, fi);

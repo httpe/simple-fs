@@ -5,15 +5,19 @@
 
 #include "block_io.h"
 
+#include "time.h"
+
+// Mimic Linux stat.h
 typedef struct fs_stat {
     uint64_t nlink;		/* Link count.  */
     uint32_t mode;		/* File mode.  */
     uint64_t size;		/* Size of file, in bytes.  */
     uint64_t blocks;	/* Number 512-byte blocks allocated. */
-    uint64_t mtime;		/* Time of last modification.  */
-    uint64_t ctime;		/* Time of last status change.  */
+    date_time mtime;	/* Time of last modification.  */
+    date_time ctime;	/* Time of last status change.  */
 } fs_stat;
 
+// Mimic FUSE struct fuse_file_info
 typedef struct fs_file_info {
 	/** Open flags.	 Available in open() and release() */
 	int32_t flags;
@@ -23,11 +27,13 @@ typedef struct fs_file_info {
 	uint64_t fh;
 } fs_file_info;
 
+// Abstraction of FUSE fuse_fill_dir_t
 typedef struct fs_dir_filler_info fs_dir_filler_info; // Opaque struct, definition differ in FUSE vs simple-OS 
 typedef int (*fs_dir_filler) (fs_dir_filler_info*, const char *name, const struct fs_stat *); // definition differ in FUSE vs simple-OS 
 
 struct fs_mount_point; // Declaring below
 
+// Mimic FUSE struct fuse_operations
 typedef struct file_system_operations {
     int (*getattr) (struct fs_mount_point* mount_point, const char * path, struct fs_stat *, struct fs_file_info *);
     int (*mknod) (struct fs_mount_point* mount_point, const char * path, uint32_t mode);

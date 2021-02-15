@@ -3,7 +3,6 @@
 #include <errno.h>
 #include <assert.h>
 #include <stddef.h>
-#include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -731,35 +730,28 @@ static fat_resolve_path_status_t fat32_resolve_path(fat32_meta_t* meta, const ch
 }
 
 
-time_t convert_datetime(uint16_t date_entry, uint16_t time_entry) {
-	struct tm * time_info;
-	time_t raw_time;
-
-	time(&raw_time);
-	time_info = localtime(&raw_time);
-	time_info->tm_sec = (time_entry & 0x1F) << 1;
-	time_info->tm_min = (time_entry & 0x7E0) >> 5;
-	time_info->tm_hour = (time_entry & 0xF800) >> 11;
-	time_info->tm_mday = date_entry & 0x1F;
-	time_info->tm_mon = ((date_entry & 0x1E0) >> 5) - 1;
-	time_info->tm_year = ((date_entry & 0xFE00) >> 9) + 80;
-	return mktime(time_info);
+date_time convert_datetime(uint16_t date_entry, uint16_t time_entry) {
+	date_time time_info;
+	time_info.tm_sec = (time_entry & 0x1F) << 1;
+	time_info.tm_min = (time_entry & 0x7E0) >> 5;
+	time_info.tm_hour = (time_entry & 0xF800) >> 11;
+	time_info.tm_mday = date_entry & 0x1F;
+	time_info.tm_mon = ((date_entry & 0x1E0) >> 5) - 1;
+	time_info.tm_year = ((date_entry & 0xFE00) >> 9) + 80;
+	return time_info;
 }
 
 void set_timestamp(uint16_t* date_entry, uint16_t* time_entry)
 {
-	struct tm * time_info;
-	time_t raw_time;
-	time(&raw_time);
-	time_info = localtime(&raw_time);
+    date_time time_info = current_datetime();
     *time_entry = 0;
-    *time_entry += (time_info->tm_sec >> 1);
-    *time_entry += (time_info->tm_min << 5);
-    *time_entry += (time_info->tm_hour << 11);
+    *time_entry += (time_info.tm_sec >> 1);
+    *time_entry += (time_info.tm_min << 5);
+    *time_entry += (time_info.tm_hour << 11);
     *date_entry = 0;
-    *date_entry += time_info->tm_mday;
-    *date_entry += (time_info->tm_mon + 1) << 5;
-    *date_entry += (time_info->tm_year - 80) << 9;
+    *date_entry += time_info.tm_mday;
+    *date_entry += (time_info.tm_mon + 1) << 5;
+    *date_entry += (time_info.tm_year - 80) << 9;
 }
 
 

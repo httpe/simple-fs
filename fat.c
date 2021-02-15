@@ -1863,10 +1863,8 @@ int fat32_release(struct fs_mount_point* mount_point, const char * path, struct 
 	return 0;
 }
 
-int32_t fat32_mount(block_storage_t* storage, struct fs_mount_option option, const void* fs_option, fs_mount_point* mount_point)
+int32_t fat32_mount(fs_mount_point* mount_point)
 {
-    (void) fs_option;
-    (void) option;
 
     fat32_meta_t* meta = malloc(sizeof(fat32_meta_t));
     memset(meta, 0, sizeof(*meta));
@@ -1886,7 +1884,7 @@ int32_t fat32_mount(block_storage_t* storage, struct fs_mount_option option, con
         .truncate = fat32_truncate
     };
 
-    meta->storage = storage;
+    meta->storage = mount_point->storage;
     // Read header
     int32_t res = fat32_get_meta(meta);
     if(res != 0) {

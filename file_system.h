@@ -47,22 +47,28 @@ typedef struct fs_mount_option {
     uint32_t flag;
 } fs_mount_option;
 
-typedef struct fs_mount_point {
-    const char* mount_target;
-    struct fs_mount_option option;
-    void* fs_meta;
-    struct file_system_operations operations;
-} fs_mount_point;
-
 enum file_system_type {
-    FAT_32
+    FILE_SYSTEM_FAT_32
 };
 
+struct fs_mount_point;
 struct file_system {
     enum file_system_type type;
     void* fs_global_meta;
-    int (*mount) (block_storage_t* storage, struct fs_mount_option option, const void* fs_option, fs_mount_point* mount_point);
+    int (*mount) (struct fs_mount_point* mount_point);
 };
+typedef struct fs_mount_point {
+    struct file_system* fs;
+    block_storage_t* storage;
+    char* mount_target;
+    void* fs_option; 
+    struct fs_mount_option mount_option;
+
+    void* fs_meta; // File system internal data structure
+    struct file_system_operations operations;
+} fs_mount_point;
+
+
 
 // int32_t fs_mount(block_storage_t* storage, const char* target, enum file_system_type file_system_type, 
 //             struct fs_mount_option option, const void* fs_option, fs_mount_point* mount_point);

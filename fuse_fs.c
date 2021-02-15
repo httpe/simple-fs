@@ -273,13 +273,22 @@ int main(int argc, char *argv[])
         }
     }
 
+    fs = (struct file_system) {.type = FILE_SYSTEM_FAT_32};
     res = fat32_init(&fs);
     if(res < 0) {
         printf("Fail to initialize the file system\n");
         exit(1);
     }
-    fs_mount_option option = {0};
-    res = fs.mount(storage, option, NULL, &mount_point);
+
+    fs_mount_option mount_option = {0};
+    mount_point = (fs_mount_point) {
+        .fs = &fs,
+        .storage = storage,
+        .mount_target=args.argv[args.argc-1], 
+        .mount_option=mount_option, 
+        .fs_option = NULL
+    };
+    res = fs.mount(&mount_point);
     if(res < 0) {
         printf("Fail to mount the file system, maybe the storage is not correctly formated?\n");
         exit(1);

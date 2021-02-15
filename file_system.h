@@ -64,6 +64,7 @@ struct file_system {
     int (*mount) (struct fs_mount_point* mount_point);
 };
 typedef struct fs_mount_point {
+    uint64_t id;
     struct file_system* fs;
     block_storage_t* storage;
     char* mount_target;

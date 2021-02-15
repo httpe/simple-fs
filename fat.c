@@ -1226,6 +1226,7 @@ static int fat32_getattr(struct fs_mount_point* mount_point, const char * path, 
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
 
 	memset(st, 0, sizeof(*st));
+    st->mount_point_id = mount_point->id;
 
     fat32_file_entry_t file_entry = {0};
     fat_resolve_path_status_t status = fat32_resolve_path(meta, path, &file_entry);
@@ -1237,6 +1238,7 @@ static int fat32_getattr(struct fs_mount_point* mount_point, const char * path, 
         st->mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
         st->nlink = 2;
         uint32_t cluster_number = meta->bootsector->root_cluster;
+        st->inode = cluster_number;
         st->size = count_clusters(meta, cluster_number)*bytes_per_cluster;
         st->blocks = st->size/512;
         return 0;
@@ -1257,17 +1259,18 @@ static int fat32_getattr(struct fs_mount_point* mount_point, const char * path, 
         } else {
             st->mode = S_IRWXU | S_IRWXG | S_IRWXO;
         }
+        uint32_t cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
         if (HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
             st->mode |= S_IFDIR;
             st->nlink = 2;
-            uint32_t cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
+            st->inode = cluster_number;
             st->size = count_clusters(meta, cluster_number)*bytes_per_cluster;
             st->blocks = st->size/512;
         } else {
             st->mode |= S_IFREG;
             st->nlink = 1;
             st->size = file_entry.direntry.size;
-            uint32_t cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
+            st->inode = cluster_number;
             st->blocks = count_clusters(meta, cluster_number)*bytes_per_cluster/512;
         }
     }

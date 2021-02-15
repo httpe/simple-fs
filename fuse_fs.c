@@ -72,6 +72,8 @@ time_t datetime2ts(date_time dt) {
 void fs_stat2stat(const fs_stat* fs_st, struct stat* st)
 {
     // memset(st, 0, sizeof(*st));
+    st->st_dev = fs_st->mount_point_id;
+    st->st_ino = fs_st->inode;
     st->st_nlink = fs_st->nlink; 
     st->st_size=fs_st->size; 
     st->st_mtim.tv_sec = datetime2ts(fs_st->mtime); 
@@ -288,6 +290,7 @@ int main(int argc, char *argv[])
 
     fs_mount_option mount_option = {0};
     mount_point = (fs_mount_point) {
+        .id = 0,
         .fs = &fs,
         .storage = storage,
         .mount_target=args.argv[args.argc-1], 

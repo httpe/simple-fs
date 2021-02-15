@@ -7,12 +7,14 @@
 // Mimic Linux stat.h
 
 typedef struct fs_stat {
-    uint64_t nlink;		/* Link count.  */
-    uint32_t mode;		/* File mode.  */
-    uint64_t size;		/* Size of file, in bytes.  */
-    uint64_t blocks;	/* Number 512-byte blocks allocated. */
-    date_time mtime;	/* Time of last modification.  */
-    date_time ctime;	/* Time of last status change.  */
+    uint64_t mount_point_id;        /* Mount Point ID  */
+    uint64_t inode;                 /* File serial number.	*/
+    uint64_t nlink;		            /* Link count.  */
+    uint32_t mode;		            /* File mode.  */
+    uint64_t size;		            /* Size of file, in bytes.  */
+    uint64_t blocks;	            /* Number 512-byte blocks allocated. */
+    date_time mtime;	            /* Time of last modification.  */
+    date_time ctime;	            /* Time of last status change.  */
 } fs_stat;
 
 

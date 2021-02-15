@@ -1420,52 +1420,50 @@ static int fat32_mkdir(struct fs_mount_point* mount_point, const char * path, ui
     return 0;
 }
 
-static int fat32_unlink(struct fs_mount_point* mount_point, const char * path)
+static int32_t fat32_is_cluster_opened(fat32_meta_t* meta, uint32_t cluster)
 {
-    fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
-    
-    fat32_file_entry_t file_entry = {0};
-    fat_resolve_path_status_t status = fat32_resolve_path(meta, path, &file_entry);
-
-    if(status == FAT_PATH_RESOLVE_ERROR) {
-        return -EIO;
+    for(int i=0;i<FAT32_N_OPEN_FILE;i++) {
+        uint32_t opened_cluster =  meta->file_table[i].direntry.cluster_lo + (meta->file_table[i].direntry.cluster_hi << 16);
+        if(cluster == opened_cluster) {
+            return 1;
+        }
     }
-    if(status == FAT_PATH_RESOLVE_NOT_FOUND || status == FAT_PATH_RESOLVE_INVALID_PATH) {
-        return -ENOENT;
-    }
-    if(status == FAT_PATH_RESOLVE_ROOT_DIR) {
-        // not allow to unlink/delete root dir
-        return -EPERM;
-    }
-    assert(status == FAT_PATH_RESOLVE_FOUND);    
-
-    if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
-        // Not allow to unlink directory
-        return -EISDIR;
-    }
-
-    // Remove the dir entry
-    fat_dir_iterator_t iter = {.first_cluster = file_entry.dir_cluster};
-    int32_t res = fat32_rm_file_entry(meta, &iter, &file_entry);
-    fat_free_dir_iterator(&iter);
-    if(res < 0) {
-        return res;
-    }
-
-    // Free data clusters
-    uint32_t file_content_cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
-    res = fat32_free_cluster(meta, 0, file_content_cluster_number, 0); // free the whole cluster chain
-    if(res < 0) {
-        return res;
-    }
-
     return 0;
 }
 
-static int fat32_rmdir(struct fs_mount_point* mount_point, const char * path)
+//return: 0 - not empty, 1 - empty, <0 - error
+static int32_t fat32_is_dir_empty(fat32_meta_t* meta, fat_dir_iterator_t* iter)
 {
-    fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
+    fat32_file_entry_t file_in_dir = {0};
 
+    while(1) {
+        fat_iterate_dir_status_t iter_status = fat32_iterate_dir(meta,iter,&file_in_dir);
+        if(iter_status == FAT_DIR_ITER_ERROR) {
+            // Any error will discard all info we got
+            fat_free_dir_iterator(iter);
+            return -EIO;
+        }
+        if(iter_status == FAT_DIR_ITER_DELETED || iter_status == FAT_DIR_ITER_DOT_ENTRY) {
+            continue;
+        }
+        if(iter_status == FAT_DIR_ITER_NO_MORE_ENTRY || iter_status == FAT_DIR_ITER_FREE_ENTRY) {
+            // Dir is empty
+            fat_free_dir_iterator(iter);
+            return 1;
+        }
+        assert(iter_status == FAT_DIR_ITER_VALID_ENTRY);
+        if(HAS_ATTR(file_in_dir.direntry.attr, FAT_ATTR_VOLUME_ID)) {
+            // Skip Volume label entry when listing directory
+            continue;
+        }
+        // Dir is not empty
+        fat_free_dir_iterator(iter);
+        return 0;
+    }
+}
+
+static int32_t fat32_rm(fat32_meta_t* meta, const char * path, enum fat32_rm_type rm_type)
+{
     fat32_file_entry_t file_entry = {0};
     fat_resolve_path_status_t status = fat32_resolve_path(meta, path, &file_entry);
 
@@ -1481,41 +1479,32 @@ static int fat32_rmdir(struct fs_mount_point* mount_point, const char * path)
     }
     assert(status == FAT_PATH_RESOLVE_FOUND);
 
-    if(!HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
-        // Not allow to perform rmdir on file
-        return -ENOTDIR;
-    }
-
-    uint32_t dir_cluster = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
-    fat_dir_iterator_t iter = {.first_cluster = dir_cluster};
-    fat32_file_entry_t file_in_dir = {0};
-
-    while(1) {
-        fat_iterate_dir_status_t iter_status = fat32_iterate_dir(meta,&iter,&file_in_dir);
-        if(iter_status == FAT_DIR_ITER_ERROR) {
-            // Any error will discard all info we got
-            fat_free_dir_iterator(&iter);
-            return -EIO;
-        }
-        if(iter_status == FAT_DIR_ITER_DELETED || iter_status == FAT_DIR_ITER_DOT_ENTRY) {
-            continue;
-        }
-        if(iter_status == FAT_DIR_ITER_NO_MORE_ENTRY || iter_status == FAT_DIR_ITER_FREE_ENTRY) {
-            // Dir is empty
-            break;
-        }
-        assert(iter_status == FAT_DIR_ITER_VALID_ENTRY);
-        if(HAS_ATTR(file_in_dir.direntry.attr, FAT_ATTR_VOLUME_ID)) {
-            // Skip Volume label entry when listing directory
-            continue;
-        }
-        // Dir is not empty
-        fat_free_dir_iterator(&iter);
+    uint32_t cluster = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
+    if(fat32_is_cluster_opened(meta, cluster)) {
+        // shall not delete opened file
         return -EPERM;
     }
 
-    fat_free_dir_iterator(&iter);
-    iter.first_cluster = file_entry.dir_cluster;
+    if(HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
+        if(rm_type == FAT32_RM_FILE) {
+            return -ENOTDIR;
+        }
+        fat_dir_iterator_t iter = {.first_cluster = cluster};
+        int32_t is_empty = fat32_is_dir_empty(meta, &iter);
+        if(is_empty < 0) {
+            return is_empty;
+        }
+        if(!is_empty) {
+            // Do not allow deleting non-empty dir
+            return -EPERM;
+        }
+    } else {
+        if(rm_type == FAT32_RM_DIR) {
+            return -EISDIR;
+        }
+    }
+
+    fat_dir_iterator_t iter = {.first_cluster = file_entry.dir_cluster};
     int32_t res = fat32_rm_file_entry(meta, &iter, &file_entry);
     fat_free_dir_iterator(&iter);
     if(res < 0) {
@@ -1523,13 +1512,26 @@ static int fat32_rmdir(struct fs_mount_point* mount_point, const char * path)
     }
 
     // Free data clusters
-    uint32_t file_content_cluster_number = file_entry.direntry.cluster_lo + (file_entry.direntry.cluster_hi << 16);
-    res = fat32_free_cluster(meta, 0, file_content_cluster_number, 0); // free the whole cluster chain
+    res = fat32_free_cluster(meta, 0, cluster, 0); // free the whole cluster chain
     if(res < 0) {
         return res;
     }
 
     return 0;
+}
+
+static int fat32_unlink(struct fs_mount_point* mount_point, const char * path)
+{
+    fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
+    int32_t res = fat32_rm(meta, path, FAT32_RM_FILE);
+    return res;
+}
+
+static int fat32_rmdir(struct fs_mount_point* mount_point, const char * path)
+{
+    fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
+    int32_t res = fat32_rm(meta, path, FAT32_RM_DIR);
+    return res;
 }
 
 static int fat32_write(struct fs_mount_point* mount_point, const char * path, const char *buf, uint64_t size, int64_t offset, struct fs_file_info * fi)
@@ -1711,7 +1713,6 @@ static int fat32_truncate(struct fs_mount_point* mount_point, const char * path,
     return 0;
 }
 
-
 static int fat32_rename(struct fs_mount_point* mount_point, const char * from, const char * to, unsigned int flags)
 {
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
@@ -1740,26 +1741,16 @@ static int fat32_rename(struct fs_mount_point* mount_point, const char * from, c
 
     assert(from_status == FAT_PATH_RESOLVE_FOUND);
 
-    fat32_file_entry_t to_file_entry = {0};
-    fat_resolve_path_status_t to_status = fat32_resolve_path(meta, to, &to_file_entry);
+    uint32_t from_file_content_cluster_number = from_file_entry.direntry.cluster_lo + (from_file_entry.direntry.cluster_hi << 16);
+    // Shall not rename file opened
+    if(fat32_is_cluster_opened(meta, from_file_content_cluster_number)) {
+        return -EBUSY;
+    }
 
-    if(to_status == FAT_PATH_RESOLVE_ROOT_DIR) {
-        return -EPERM;
-    }
-    if(to_status == FAT_PATH_RESOLVE_INVALID_PATH) {
-        return -ENOENT;
-    }
-    if(to_status == FAT_PATH_RESOLVE_ERROR) {
-        return -EIO;
-    }
-    if(to_status == FAT_PATH_RESOLVE_FOUND) {
-        // Replace dir entry
-        fat_dir_iterator_t iter = {.first_cluster = to_file_entry.dir_cluster};
-        int32_t dir_res = fat32_rm_file_entry(meta, &iter, &to_file_entry);
-        fat_free_dir_iterator(&iter);
-        if(dir_res<0) {
-            return dir_res;
-        }
+    // Remove anything at the "to" path, if exist
+    int32_t rm_res = fat32_rm(meta, to, FAT32_RM_ANY);
+    if(rm_res < 0 && rm_res != -ENOENT) {
+        return rm_res;
     }
 
     int64_t parent_cluster = fat32_create_new(meta, to, &from_file_entry.direntry);

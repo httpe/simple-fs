@@ -164,6 +164,12 @@ typedef enum fat_resolve_path_status {
 	FAT_PATH_RESOLVE_INVALID_PATH
 } fat_resolve_path_status_t;
 
+enum fat32_rm_type {
+    FAT32_RM_FILE,
+    FAT32_RM_DIR,
+    FAT32_RM_ANY
+};
+
 int32_t fat32_init(struct file_system* fs);
 
 // Used by make_fs

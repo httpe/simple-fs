@@ -6,16 +6,16 @@
 #include "block_io.h"
 
 #include "time.h"
+#include "stat.h"
 
-// Mimic Linux stat.h
-typedef struct fs_stat {
-    uint64_t nlink;		/* Link count.  */
-    uint32_t mode;		/* File mode.  */
-    uint64_t size;		/* Size of file, in bytes.  */
-    uint64_t blocks;	/* Number 512-byte blocks allocated. */
-    date_time mtime;	/* Time of last modification.  */
-    date_time ctime;	/* Time of last status change.  */
-} fs_stat;
+typedef struct mbr_partition_table_entry {
+    uint8_t driver_attributes;
+    uint8_t CHS_partition_start[3];
+    uint8_t partition_type;
+    uint8_t CHS_partition_end[3];
+    uint32_t LBA_partition_start;
+    uint32_t partition_sector_count;
+} __attribute__ ((__packed__)) mbr_partition_table_entry_t;
 
 // Mimic FUSE struct fuse_file_info
 typedef struct fs_file_info {

@@ -164,14 +164,7 @@ typedef enum fat_resolve_path_status {
 	FAT_PATH_RESOLVE_INVALID_PATH
 } fat_resolve_path_status_t;
 
-typedef struct mbr_partition_table_entry {
-    uint8_t driver_attributes;
-    uint8_t CHS_partition_start[3];
-    uint8_t partition_type;
-    uint8_t CHS_partition_end[3];
-    uint32_t LBA_partition_start;
-    uint32_t partition_sector_count;
-} __attribute__ ((__packed__)) mbr_partition_table_entry_t;
-
 int32_t fat32_init(struct file_system* fs);
-int32_t fat32_make_fs(block_storage_t* storage, const char* bootloader_path);
+
+// Used by make_fs
+void fat32_set_timestamp(uint16_t* date_entry, uint16_t* time_entry);

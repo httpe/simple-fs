@@ -32,10 +32,16 @@ int64_t read_blocks(block_storage_t* storage, uint8_t* buff,  uint32_t LBA, uint
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_RDONLY);
+    if(fd < 0) {
+        return -errno;
+    }
     int size = block_count*storage->block_size;
     int offset = LBA*storage->block_size;
     int64_t res = pread(fd, buff, size, offset);
     close(fd);
+    if(res < 0) {
+        return -errno;
+    }
     return res;
 }
 
@@ -44,12 +50,15 @@ int64_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_coun
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_WRONLY);
     if(fd == -1) {
-        return -1;
+        return -errno;
     }
     int size = block_count*storage->block_size;
     int offset = LBA*storage->block_size;
     int64_t res = pwrite(fd, buff, size, offset);
     close(fd);
+    if(res < 0) {
+        return -errno;
+    }
     return res;
 }
 

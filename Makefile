@@ -12,8 +12,10 @@ simple_fs_block.o \
 
 FAT_OBJS=\
 fat.o \
-fuse_fs.o \
 
+FUSE_OBJS=\
+fuse_fs.o \
+make_fs.o \
 
 .PHONY: all clean
 
@@ -23,7 +25,7 @@ all: simple_fs_block fuse_fs
 simple_fs_block: $(SIMPLE_FS_OBJS) $(SHARED_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
-fuse_fs: $(FAT_OBJS) $(SHARED_OBJS)
+fuse_fs: $(FUSE_OBJS) $(FAT_OBJS) $(SHARED_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 # compile and generate dependency info (*.d) by -MD

@@ -6,6 +6,8 @@
 #include <stddef.h>
 
 #include "fat.h"
+#include "stat.h"
+#include "make_fs.h"
 
 #define FUSE_USE_VERSION 31
 #include <fuse.h>

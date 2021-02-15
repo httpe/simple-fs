@@ -11,16 +11,18 @@ simple_fs_block.o \
 
 FAT_OBJS=\
 fat.o \
+fuse_fs.o \
+
 
 .PHONY: all clean
 
-all: simple_fs_block fat
+all: simple_fs_block fuse_fs
 
 # Ref: https://www.gnu.org/software/make/manual/html_node/Automatic-Variables.html#Automatic-Variables
 simple_fs_block: $(SIMPLE_FS_OBJS) $(SHARED_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
-fat: $(FAT_OBJS) $(SHARED_OBJS)
+fuse_fs: $(FAT_OBJS) $(SHARED_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 # compile and generate dependency info (*.d) by -MD
@@ -35,7 +37,7 @@ fat: $(FAT_OBJS) $(SHARED_OBJS)
 clean:
 	rm -f *.o
 	rm -f simple_fs_block
-	rm -f fat
+	rm -f fuse_fs
 	rm -f *.d
 
 # include make rules from *.d files, which dictate the dependency of c files on header

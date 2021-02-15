@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "block_io.h"
+#include "file_system.h"
 
 // Source: https://wiki.osdev.org/FAT
 
@@ -116,12 +117,13 @@ typedef struct fat32_fsinfo {
     uint32_t trailing_signature;
 } __attribute__ ((__packed__)) fat32_fsinfo_t;
 
-
+#define FAT32_N_OPEN_FILE 100
 typedef struct fat32_meta {
     fat32_bootsector_t* bootsector;
     fat32_fsinfo_t* fs_info;
     uint32_t* fat;
 	block_storage_t* storage;
+	fat32_file_entry_t file_table[FAT32_N_OPEN_FILE];
 } fat32_meta_t;
 
 typedef struct fat_cluster {
@@ -170,3 +172,6 @@ typedef struct mbr_partition_table_entry {
     uint32_t LBA_partition_start;
     uint32_t partition_sector_count;
 } __attribute__ ((__packed__)) mbr_partition_table_entry_t;
+
+int32_t fat32_init(struct file_system* fs);
+int32_t fat32_make_fs(block_storage_t* storage, const char* bootloader_path);

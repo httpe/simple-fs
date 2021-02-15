@@ -2,7 +2,7 @@ simple_fs
 simple_fs_block
 *.bin
 *.fat
-fat
+fuse_fs
 mnt/**
 test
 test.c

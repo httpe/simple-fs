@@ -5,14 +5,15 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "gcc - Build and debug active file",
+            "name": "Debug FUSE",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${fileDirname}/${fileBasenameNoExtension}",
+            "program": "${workspaceFolder}/fuse_fs",
             "args": [
                 "-d",
                 "-s",
-                "~/mnt/myfat"
+                "--make_fs",
+                "${env:HOME}/mnt/fuse_fs",
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

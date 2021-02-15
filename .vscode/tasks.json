@@ -3,15 +3,15 @@
         {
             "type":"shell",
             "label": "Build",
-            "command": "make all; mkdir -p mnt; cp testfs.fat fat32_fs_image.fat",
+            "command": "make all; mkdir -p ~/mnt/fuse_fs",
             "problemMatcher": {
                 "base": "$gcc",
             }
         },
         {
             "type":"shell",
-            "label": "Force Rebuild FAT",
-            "command": "make -B fat",
+            "label": "Force Rebuild",
+            "command": "make -B all",
             "problemMatcher": {
                 "base": "$gcc",
             }
@@ -19,7 +19,7 @@
         {
             "type":"shell",
             "label": "Umount FUSE and Delete Disk Image",
-            "command": "fusermount -u ~/mnt/myfat;"
+            "command": "fusermount -u ~/mnt/fuse_fs"
         }
     ],
     "version": "2.0.0"

@@ -65,7 +65,7 @@ static char* split_path(char *path, char *name)
   return path;
 }
 
-fat_cluster_status_t fat32_interpret_fat_entry(uint32_t entry)
+static fat_cluster_status_t fat32_interpret_fat_entry(uint32_t entry)
 {
     entry = entry & 0x0FFFFFFF;
 
@@ -86,7 +86,7 @@ fat_cluster_status_t fat32_interpret_fat_entry(uint32_t entry)
     return FAT_CLUSTER_RESERVED;
 }
 
-int32_t fat32_get_meta(fat32_meta_t* meta)
+static int32_t fat32_get_meta(fat32_meta_t* meta)
 {
     block_storage_t* storage = meta->storage;
     
@@ -187,7 +187,7 @@ return -1;
 
 }
 
-fat_cluster_status_t fat32_get_cluster_info(fat32_meta_t* meta, uint32_t cluster_number, fat_cluster_t* cluster)
+static fat_cluster_status_t fat32_get_cluster_info(fat32_meta_t* meta, uint32_t cluster_number, fat_cluster_t* cluster)
 {
     // First&second cluster are reserved for FAT ID and End of Cluster Mark 
     if(cluster_number <= 1) {
@@ -247,7 +247,7 @@ static uint32_t fat32_index_cluster_chain(fat32_meta_t* meta, uint32_t cluster_n
     return cluster.next;
 }
 
-int32_t fat32_write_meta(fat32_meta_t* meta, fat32_meta_t* new_meta)
+static int32_t fat32_write_meta(fat32_meta_t* meta, fat32_meta_t* new_meta)
 {
     uint32_t fat_byte_size = meta->bootsector->table_sector_size_32*meta->bootsector->bytes_per_sector;
     // Write new FAT to main FAT and backups
@@ -318,7 +318,7 @@ static void fat32_free_meta(fat32_meta_t* meta)
 }
 
 // Return: Cluster number of the first newly allocated cluster
-uint32_t fat32_allocate_cluster(fat32_meta_t* meta, uint32_t prev_cluster_number, uint32_t cluster_count_to_allocate)
+static uint32_t fat32_allocate_cluster(fat32_meta_t* meta, uint32_t prev_cluster_number, uint32_t cluster_count_to_allocate)
 {
     uint32_t cluster_number = meta->fs_info->next_free_cluster;
     if(cluster_number == 0xFFFFFFFF) {
@@ -423,7 +423,7 @@ static int32_t fat32_free_cluster(fat32_meta_t* meta, uint32_t prev_cluster_numb
 
 }
 
-int64_t fat32_read_clusters(fat32_meta_t* meta, uint32_t cluster_number, uint32_t clusters_to_read, uint8_t* buff) 
+static int64_t fat32_read_clusters(fat32_meta_t* meta, uint32_t cluster_number, uint32_t clusters_to_read, uint8_t* buff) 
 {
     assert(cluster_number >= 2);
     uint32_t cluster_byte_size = meta->bootsector->bytes_per_sector*meta->bootsector->sectors_per_cluster;
@@ -448,7 +448,7 @@ int64_t fat32_read_clusters(fat32_meta_t* meta, uint32_t cluster_number, uint32_
     return total_bytes_read;
 }
 
-int64_t fat32_write_clusters(fat32_meta_t* meta, uint32_t cluster_number, uint32_t clusters_to_write, uint8_t* buff)
+static int64_t fat32_write_clusters(fat32_meta_t* meta, uint32_t cluster_number, uint32_t clusters_to_write, uint8_t* buff)
 {
     assert(cluster_number >= 2);
     uint32_t cluster_byte_size = meta->bootsector->bytes_per_sector*meta->bootsector->sectors_per_cluster;
@@ -473,7 +473,7 @@ int64_t fat32_write_clusters(fat32_meta_t* meta, uint32_t cluster_number, uint32
 }
 
 // trim leading and trailing spaces and trailing periods
-void trim_file_name(char* str)
+static void trim_file_name(char* str)
 {
     if(str == NULL) {
         return;
@@ -535,7 +535,7 @@ static void fat_free_dir_iterator(fat_dir_iterator_t* iter)
     fat32_reset_dir_iterator(iter);
 }
 
-fat_iterate_dir_status_t fat32_iterate_dir(fat32_meta_t* meta, fat_dir_iterator_t* iter, fat32_file_entry_t* file_entry)
+static fat_iterate_dir_status_t fat32_iterate_dir(fat32_meta_t* meta, fat_dir_iterator_t* iter, fat32_file_entry_t* file_entry)
 {
     if(iter->dir_entries == NULL) {
         // if buff is null, read the whole dir into memory
@@ -1166,7 +1166,7 @@ static int32_t fat32_update_file_entry(fat32_meta_t* meta, fat32_file_entry_t* f
 }
 
 
-int fat32_readdir(struct fs_mount_point* mount_point, const char * path, struct fs_dir_filler_info* info, fs_dir_filler filler)
+static int fat32_readdir(struct fs_mount_point* mount_point, const char * path, struct fs_dir_filler_info* info, fs_dir_filler filler)
 {
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
 
@@ -1219,7 +1219,7 @@ int fat32_readdir(struct fs_mount_point* mount_point, const char * path, struct 
 }
 
 
-int fat32_getattr(struct fs_mount_point* mount_point, const char * path, struct fs_stat * st, struct fs_file_info *fi)
+static int fat32_getattr(struct fs_mount_point* mount_point, const char * path, struct fs_stat * st, struct fs_file_info *fi)
 {
 	(void) fi;
 
@@ -1277,7 +1277,7 @@ int fat32_getattr(struct fs_mount_point* mount_point, const char * path, struct 
     return 0;
 }
 
-int fat32_read(struct fs_mount_point* mount_point, const char * path, char *buf, uint64_t size, int64_t offset, struct fs_file_info *fi)
+static int fat32_read(struct fs_mount_point* mount_point, const char * path, char *buf, uint64_t size, int64_t offset, struct fs_file_info *fi)
 {
 
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
@@ -1368,7 +1368,7 @@ int fat32_read(struct fs_mount_point* mount_point, const char * path, char *buf,
     }
 }
 
-int fat32_mknod(struct fs_mount_point* mount_point, const char * path, uint32_t mode)
+static int fat32_mknod(struct fs_mount_point* mount_point, const char * path, uint32_t mode)
 {
     (void) mode;
 
@@ -1382,7 +1382,7 @@ int fat32_mknod(struct fs_mount_point* mount_point, const char * path, uint32_t 
     return 0;
 }
 
-int fat32_mkdir(struct fs_mount_point* mount_point, const char * path, uint32_t mode)
+static int fat32_mkdir(struct fs_mount_point* mount_point, const char * path, uint32_t mode)
 {
     (void) mode;
 
@@ -1420,7 +1420,7 @@ int fat32_mkdir(struct fs_mount_point* mount_point, const char * path, uint32_t 
     return 0;
 }
 
-int fat32_unlink(struct fs_mount_point* mount_point, const char * path)
+static int fat32_unlink(struct fs_mount_point* mount_point, const char * path)
 {
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
     
@@ -1462,7 +1462,7 @@ int fat32_unlink(struct fs_mount_point* mount_point, const char * path)
     return 0;
 }
 
-int fat32_rmdir(struct fs_mount_point* mount_point, const char * path)
+static int fat32_rmdir(struct fs_mount_point* mount_point, const char * path)
 {
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
 
@@ -1532,7 +1532,7 @@ int fat32_rmdir(struct fs_mount_point* mount_point, const char * path)
     return 0;
 }
 
-int fat32_write(struct fs_mount_point* mount_point, const char * path, const char *buf, uint64_t size, int64_t offset, struct fs_file_info * fi)
+static int fat32_write(struct fs_mount_point* mount_point, const char * path, const char *buf, uint64_t size, int64_t offset, struct fs_file_info * fi)
 {
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
 
@@ -1611,7 +1611,7 @@ int fat32_write(struct fs_mount_point* mount_point, const char * path, const cha
     return size;
 }
 
-int fat32_truncate(struct fs_mount_point* mount_point, const char * path, int64_t size, struct fs_file_info *fi)
+static int fat32_truncate(struct fs_mount_point* mount_point, const char * path, int64_t size, struct fs_file_info *fi)
 {
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
     
@@ -1712,7 +1712,7 @@ int fat32_truncate(struct fs_mount_point* mount_point, const char * path, int64_
 }
 
 
-int fat32_rename(struct fs_mount_point* mount_point, const char * from, const char * to, unsigned int flags)
+static int fat32_rename(struct fs_mount_point* mount_point, const char * from, const char * to, unsigned int flags)
 {
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
 
@@ -1778,7 +1778,7 @@ int fat32_rename(struct fs_mount_point* mount_point, const char * from, const ch
 	return 0;
 }
 
-int fat32_open(struct fs_mount_point* mount_point, const char * path, struct fs_file_info *fi)
+static int fat32_open(struct fs_mount_point* mount_point, const char * path, struct fs_file_info *fi)
 {
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
 
@@ -1840,7 +1840,7 @@ int fat32_open(struct fs_mount_point* mount_point, const char * path, struct fs_
 	return 0;
 }
 
-int fat32_release(struct fs_mount_point* mount_point, const char * path, struct fs_file_info *fi)
+static int fat32_release(struct fs_mount_point* mount_point, const char * path, struct fs_file_info *fi)
 {
 	(void) path;
     (void) fi;
@@ -1854,7 +1854,7 @@ int fat32_release(struct fs_mount_point* mount_point, const char * path, struct 
 	return 0;
 }
 
-int32_t fat32_mount(fs_mount_point* mount_point)
+static int32_t fat32_mount(fs_mount_point* mount_point)
 {
 
     fat32_meta_t* meta = malloc(sizeof(fat32_meta_t));

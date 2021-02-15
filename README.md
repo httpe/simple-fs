@@ -10,7 +10,7 @@ This is the file system part of the [Simple-OS project](https://github.com/httpe
 
 ## Folder Structure
 
-### File Systems
+### File systems
 
 We have implemented two file systems right now:
 

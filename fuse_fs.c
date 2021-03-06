@@ -73,7 +73,7 @@ void fs_stat2stat(const fs_stat* fs_st, struct stat* st)
 {
     // memset(st, 0, sizeof(*st));
     st->st_dev = fs_st->mount_point_id;
-    st->st_ino = fs_st->inode;
+    st->st_ino = fs_st->inum;
     st->st_nlink = fs_st->nlink; 
     st->st_size=fs_st->size; 
     st->st_mtim.tv_sec = datetime2ts(fs_st->mtime); 

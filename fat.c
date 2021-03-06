@@ -1238,7 +1238,7 @@ static int fat32_getattr(struct fs_mount_point* mount_point, const char * path, 
         st->mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
         st->nlink = 2;
         uint32_t cluster_number = meta->bootsector->root_cluster;
-        st->inode = cluster_number;
+        st->inum = cluster_number;
         st->size = count_clusters(meta, cluster_number)*bytes_per_cluster;
         st->blocks = st->size/512;
         return 0;
@@ -1263,14 +1263,14 @@ static int fat32_getattr(struct fs_mount_point* mount_point, const char * path, 
         if (HAS_ATTR(file_entry.direntry.attr, FAT_ATTR_DIRECTORY)) {
             st->mode |= S_IFDIR;
             st->nlink = 2;
-            st->inode = cluster_number;
+            st->inum = cluster_number;
             st->size = count_clusters(meta, cluster_number)*bytes_per_cluster;
             st->blocks = st->size/512;
         } else {
             st->mode |= S_IFREG;
             st->nlink = 1;
             st->size = file_entry.direntry.size;
-            st->inode = cluster_number;
+            st->inum = cluster_number;
             st->blocks = count_clusters(meta, cluster_number)*bytes_per_cluster/512;
         }
     }

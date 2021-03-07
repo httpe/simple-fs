@@ -387,8 +387,12 @@ int32_t fs_close(int32_t fd)
         return res;
     }
 
-    free(file_table.file[fd].path);
-    memset(f, 0, sizeof(*f));
+    p->opended_files[fd]->ref--;
+    if(p->opended_files[fd]->ref == 0) {
+        free(p->opended_files[fd]->path);
+        memset(f, 0, sizeof(*f));
+    }
+
     p->opended_files[fd] = NULL;
     
     return 0;

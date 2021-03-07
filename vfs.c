@@ -126,6 +126,135 @@ int32_t fs_mount(block_storage_t* storage, const char* target, enum file_system_
     return -1;
 }
 
+int64_t fs_getattr(const char * path, struct fs_stat * stat)
+{
+    const char* remaining_path = NULL;
+    fs_mount_point* mp = find_mount_point(path, &remaining_path);
+    if(mp == NULL) {
+        return -ENXIO;
+    }
+    if(mp->operations.getattr == NULL) {
+        // if file system does not support this operation
+        return -EPERM;
+    }
+
+    int res = mp->operations.getattr(mp, remaining_path, stat, NULL);
+    
+    return res;
+}
+
+int64_t fs_mknod(const char * path, uint32_t mode)
+{
+    const char* remaining_path = NULL;
+    fs_mount_point* mp = find_mount_point(path, &remaining_path);
+    if(mp == NULL) {
+        return -ENXIO;
+    }
+    if(mp->operations.mknod == NULL) {
+        // if file system does not support this operation
+        return -EPERM;
+    }
+
+    int res = mp->operations.mknod(mp, remaining_path, mode);
+    
+    return res;
+}
+
+int64_t fs_mkdir(const char * path, uint32_t mode)
+{
+    const char* remaining_path = NULL;
+    fs_mount_point* mp = find_mount_point(path, &remaining_path);
+    if(mp == NULL) {
+        return -ENXIO;
+    }
+    if(mp->operations.mkdir == NULL) {
+        // if file system does not support this operation
+        return -EPERM;
+    }
+
+    int res = mp->operations.mkdir(mp, remaining_path, mode);
+    
+    return res;
+}
+
+int64_t fs_rmdir(const char * path)
+{
+    const char* remaining_path = NULL;
+    fs_mount_point* mp = find_mount_point(path, &remaining_path);
+    if(mp == NULL) {
+        return -ENXIO;
+    }
+    if(mp->operations.rmdir == NULL) {
+        // if file system does not support this operation
+        return -EPERM;
+    }
+
+    int res = mp->operations.rmdir(mp, remaining_path);
+    
+    return res;
+}
+
+int64_t fs_unlink(const char * path)
+{
+    const char* remaining_path = NULL;
+    fs_mount_point* mp = find_mount_point(path, &remaining_path);
+    if(mp == NULL) {
+        return -ENXIO;
+    }
+    if(mp->operations.unlink == NULL) {
+        // if file system does not support this operation
+        return -EPERM;
+    }
+
+    int res = mp->operations.unlink(mp, remaining_path);
+    
+    return res;
+}
+
+int64_t fs_truncate(const char * path, int64_t size)
+{
+    const char* remaining_path = NULL;
+    fs_mount_point* mp = find_mount_point(path, &remaining_path);
+    if(mp == NULL) {
+        return -ENXIO;
+    }
+    if(mp->operations.truncate == NULL) {
+        // if file system does not support this operation
+        return -EPERM;
+    }
+
+    int res = mp->operations.truncate(mp, remaining_path, size, NULL);
+    
+    return res;
+}
+
+int64_t fs_rename(const char * from, const char* to, uint32_t flags)
+{
+    const char* remaining_path_from = NULL;
+    fs_mount_point* mp_from = find_mount_point(from, &remaining_path_from);
+    if(mp_from == NULL) {
+        return -ENXIO;
+    }
+    if(mp_from->operations.rename == NULL) {
+        // if file system does not support this operation
+        return -EPERM;
+    }
+
+    const char* remaining_path_to = NULL;
+    fs_mount_point* mp_to = find_mount_point(to, &remaining_path_to);
+    if(mp_to == NULL) {
+        return -ENXIO;
+    }
+    if(mp_to != mp_from) {
+        // cannot rename (move) between different mount points
+        return -EPERM;
+    }
+
+    int res = mp_from->operations.rename(mp_from, remaining_path_from, remaining_path_to, flags);
+    
+    return res;
+}
+
 int32_t fs_open(const char * path, int32_t flags)
 {
     const char* remaining_path = NULL;
@@ -134,7 +263,7 @@ int32_t fs_open(const char * path, int32_t flags)
         return -ENXIO;
     }
     if(mp->operations.open == NULL) {
-        // if file system does not support OPEN operation
+        // if file system does not support this operation
         return -EPERM;
     }
 
@@ -204,7 +333,7 @@ int dir_filler(fs_dir_filler_info* filler_info, const char *name, const struct f
             len = FS_MAX_FILENAME_LEN;
         }
         fs_dirent* dirent = (fs_dirent*) (filler_info->buf + filler_info->entry_written * sizeof(fs_dirent));
-        memmove(dirent->name, name, len);
+        memmove(dirent->name, name, len+1);
         filler_info->entry_written++;
         return 0;
     }
@@ -218,7 +347,7 @@ int32_t fs_readdir(const char * path, int64_t entry_offset, fs_dirent* buf, uint
         return -ENXIO;
     }
     if(mp->operations.readdir == NULL) {
-        // if file system does not support OPEN operation
+        // if file system does not support this operation
         return -EPERM;
     }
     struct fs_dir_filler_info filler_info = {.buf = buf, .buf_size = buf_size, .entry_written = 0};
@@ -248,7 +377,7 @@ int32_t fs_close(int32_t fd)
         return -EBADF;
     }
     if(f->mount_point->operations.release == NULL) {
-        // if file system does not support RELEASE operation
+        // if file system does not support this operation
         return -EPERM;
     }
 
@@ -272,7 +401,7 @@ int64_t fs_read(int32_t fd, void *buf, uint32_t size)
         return -EBADF;
     }
     if(f->mount_point->operations.read == NULL) {
-        // if file system does not support READ operation
+        // if file system does not support this operation
         return -EPERM;
     }
 
@@ -293,7 +422,7 @@ int64_t fs_write(int32_t fd, void *buf, uint32_t size)
         return -EBADF;
     }
     if(f->mount_point->operations.write == NULL) {
-        // if file system does not support WRITE operation
+        // if file system does not support this operation
         return -EPERM;
     }
 
@@ -350,28 +479,77 @@ int main(int argc, char *argv[])
     assert(mp1 == mp);
     assert(strcmp("/my_file", rem_path) == 0);
 
+    // test mknod/mkdir
+    int res_mkdir = fs_mkdir("/home/my_dir", 0);
+    assert(res_mkdir == 0);
+    int res_mknod = fs_mknod("/home/my_dir/my_file", 0);
+    assert(res_mknod == 0);
+
     // test open/read/write/close
     char buf_in[512], buf_out[512];
     strcpy(buf_in, "Hello World!");
-    int fd = fs_open("/home/my_file", O_CREAT);
+    int fd = fs_open("/home/my_dir/my_file", 0);
     assert(fd == 0);
     int written = fs_write(fd, buf_in, strlen(buf_in) + 1);
     assert(written == 13);
     int close_res = fs_close(fd);
     assert(close_res == 0);
-    fd = fs_open("/home/my_file", 0);
+    fd = fs_open("/home/my_dir/my_file", 0);
     assert(fd == 0);
-    int read = fs_read(fd, buf_out, 100);
-    assert(read == 13);
+    int read = fs_read(fd, buf_out, 2);
+    assert(read == 2);
+    read = fs_read(fd, buf_out + 2, 100);
+    assert(read == 11);
     assert(strcmp(buf_out, buf_in) == 0);
     close_res = fs_close(fd);
     assert(close_res == 0);
+
+    // test getattr
+    fs_stat stat = {0};
+    int res_getattr = fs_getattr("/home/my_dir/my_file", &stat);
+    assert(res_getattr == 0);
+    assert(stat.size == 13);
+
+    // test truncate
+    int res_truncate = fs_truncate("/home/my_dir/my_file", 100);
+    assert(res_truncate == 0);
+    res_getattr = fs_getattr("/home/my_dir/my_file", &stat);
+    assert(stat.size == 100);
+    res_truncate = fs_truncate("/home/my_dir/my_file", 0);
+    assert(res_truncate == 0);
+    res_getattr = fs_getattr("/home/my_dir/my_file", &stat);
+    assert(res_getattr == 0);
+    assert(stat.size == 0);
 
     // test readdir
     fs_dirent dir_buf[10];
     int dirent_read = fs_readdir("/home", 0, dir_buf, sizeof(fs_dirent)*10);
     assert(dirent_read == 1);
-    assert(strcmp(dir_buf[0].name, "my_file") == 0);
+    assert(strcmp(dir_buf[0].name, "my_dir") == 0);
+    dirent_read = fs_readdir("/home/my_dir", 0, dir_buf, sizeof(fs_dirent)*10);
+    assert(dirent_read == 3);
+    assert(strcmp(dir_buf[0].name, ".") == 0);
+    assert(strcmp(dir_buf[1].name, "..") == 0);
+    assert(strcmp(dir_buf[2].name, "my_file") == 0);
+
+    // test rename
+    int res_rename = fs_rename("/home/my_dir/my_file", "/home/my_dir/my_new_file", 0);
+    assert(res_rename == 0);
+    dirent_read = fs_readdir("/home/my_dir", 0, dir_buf, sizeof(fs_dirent)*10);
+    assert(dirent_read == 3);
+    assert(strcmp(dir_buf[0].name, ".") == 0);
+    assert(strcmp(dir_buf[1].name, "..") == 0);
+    assert(strcmp(dir_buf[2].name, "my_new_file") == 0);
+
+    // test unlink/rmdir
+    int res_unlink = fs_unlink("/home/my_dir/my_new_file");
+    assert(res_unlink == 0);
+    dirent_read = fs_readdir("/home/my_dir", 0, dir_buf, sizeof(fs_dirent)*10);
+    assert(dirent_read == 2);
+    int res_rmdir = fs_rmdir("/home/my_dir");
+    assert(res_rmdir == 0);
+    dirent_read = fs_readdir("/home", 0, dir_buf, sizeof(fs_dirent)*10);
+    assert(dirent_read == 0);
 
 	return 0;
 }

@@ -41,7 +41,7 @@ typedef struct file_system_operations {
     int (*mkdir) (struct fs_mount_point* mount_point, const char * path, uint32_t mode);
     int (*unlink) (struct fs_mount_point* mount_point, const char * path);
     int (*rmdir) (struct fs_mount_point* mount_point, const char * path);
-    int (*rename) (struct fs_mount_point* mount_point, const char * from, const char * to, unsigned int flags);
+    int (*rename) (struct fs_mount_point* mount_point, const char * from, const char * to, uint32_t flags);
     int (*truncate) (struct fs_mount_point* mount_point, const char * path, int64_t size, struct fs_file_info *fi);
     int (*open) (struct fs_mount_point* mount_point, const char * path, struct fs_file_info *);
     int (*read) (struct fs_mount_point* mount_point, const char * path, char *buf, uint64_t size, int64_t offset, struct fs_file_info *);

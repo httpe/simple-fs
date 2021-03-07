@@ -8,7 +8,7 @@
 
 typedef struct fs_stat {
     uint64_t mount_point_id;        /* Mount Point ID  */
-    uint64_t inode;                 /* File serial number.	*/
+    uint64_t inum;                 /* File serial number.	*/
     uint64_t nlink;		            /* Link count.  */
     uint32_t mode;		            /* File mode.  */
     uint64_t size;		            /* Size of file, in bytes.  */

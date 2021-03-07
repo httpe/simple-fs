@@ -99,10 +99,9 @@ static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 {
     (void) fi;
     (void) flags;
-    (void) offset;
 
     struct fs_dir_filler_info filler_info = {.buf = buf, .filler = filler};
-    int res = mount_point.operations.readdir(&mount_point, path, &filler_info, dir_filler);
+    int res = mount_point.operations.readdir(&mount_point, path, offset, &filler_info, dir_filler);
     return res;
 }
 

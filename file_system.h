@@ -28,7 +28,8 @@ typedef struct fs_file_info {
 } fs_file_info;
 
 // Abstraction of FUSE fuse_fill_dir_t
-typedef struct fs_dir_filler_info fs_dir_filler_info; // Opaque struct, definition differ in FUSE vs simple-OS 
+struct fs_dir_filler_info; // Opaque struct, definition differ in FUSE vs simple-OS 
+typedef struct fs_dir_filler_info fs_dir_filler_info;
 typedef int (*fs_dir_filler) (fs_dir_filler_info*, const char *name, const struct fs_stat *); // definition differ in FUSE vs simple-OS 
 
 struct fs_mount_point; // Declaring below
@@ -46,25 +47,34 @@ typedef struct file_system_operations {
     int (*read) (struct fs_mount_point* mount_point, const char * path, char *buf, uint64_t size, int64_t offset, struct fs_file_info *);
 	int (*write) (struct fs_mount_point* mount_point, const char * path, const char *buf, uint64_t size, int64_t offset, struct fs_file_info *);
 	int (*release) (struct fs_mount_point* mount_point, const char * path, struct fs_file_info *);
-	int (*readdir) (struct fs_mount_point* mount_point, const char * path, struct fs_dir_filler_info*, fs_dir_filler);
+	int (*readdir) (struct fs_mount_point* mount_point, const char * path, int64_t offset, struct fs_dir_filler_info* filler_info, fs_dir_filler filler);
 } file_system_operations_t;
 
 typedef struct fs_mount_option {
-    uint32_t flag;
+    uint32_t flag; // not yet used
 } fs_mount_option;
 
+#define N_FILE_SYSTEM_TYPES 1
 enum file_system_type {
     FILE_SYSTEM_FAT_32
 };
 
+enum file_system_status {
+    FS_STATUS_NOT_INITIALIZED,
+    FS_STATUS_READY
+};
+
 struct fs_mount_point;
-struct file_system {
+typedef struct file_system {
+    enum file_system_status status;
     enum file_system_type type;
     void* fs_global_meta;
     int (*mount) (struct fs_mount_point* mount_point);
-};
+    //TODO: umount
+} file_system;
+
 typedef struct fs_mount_point {
-    uint64_t id;
+    uint32_t id;
     struct file_system* fs;
     block_storage_t* storage;
     char* mount_target;
@@ -75,7 +85,10 @@ typedef struct fs_mount_point {
     struct file_system_operations operations;
 } fs_mount_point;
 
-
+#define FS_MAX_FILENAME_LEN 260
+typedef struct fs_dirent {
+    char name[FS_MAX_FILENAME_LEN]; // file name, max len = 260 + null terminator (referencing FAT32 max file name)
+} fs_dirent;
 
 // int32_t fs_mount(block_storage_t* storage, const char* target, enum file_system_type file_system_type, 
 //             struct fs_mount_option option, const void* fs_option, fs_mount_point* mount_point);

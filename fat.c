@@ -1166,7 +1166,7 @@ static int32_t fat32_update_file_entry(fat32_meta_t* meta, fat32_file_entry_t* f
 }
 
 
-static int fat32_readdir(struct fs_mount_point* mount_point, const char * path, struct fs_dir_filler_info* info, fs_dir_filler filler)
+static int fat32_readdir(struct fs_mount_point* mount_point, const char * path, int64_t offset, struct fs_dir_filler_info* info, fs_dir_filler filler)
 {
     fat32_meta_t* meta = (fat32_meta_t*) mount_point->fs_meta;
 
@@ -1214,7 +1214,16 @@ static int fat32_readdir(struct fs_mount_point* mount_point, const char * path, 
             // Skip Volume label entry when listing directory
             continue;
         }
-        filler(info, (char*) file_entry.filename, NULL);
+
+        if(offset == 0) {
+            if(filler(info, (char*) file_entry.filename, NULL) != 0) {
+                // if filler's internal buffer is full, return
+                return 0;
+            }
+        } else {
+            offset--;
+        }
+        
     }
 }
 
@@ -1883,6 +1892,7 @@ int32_t fat32_init(struct file_system* fs)
 {
     fs->mount = fat32_mount;
     fs->fs_global_meta = NULL;
+    fs->status = FS_STATUS_READY;
     return 0;
 }
 

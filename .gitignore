@@ -1,5 +1,6 @@
 simple_fs
 simple_fs_block
+vfs
 *.bin
 *.fat
 fuse_fs

@@ -18,9 +18,14 @@
         },
         {
             "type":"shell",
-            "label": "Umount FUSE and Delete Disk Image",
+            "label": "Umount FUSE",
             "command": "fusermount -u ~/mnt/fuse_fs"
-        }
+        },
+        {
+            "type":"shell",
+            "label": "Delete VFS Image",
+            "command": "rm -f vfs_image.bin"
+        },
     ],
     "version": "2.0.0"
 }

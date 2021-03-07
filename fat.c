@@ -1418,7 +1418,7 @@ static int fat32_mkdir(struct fs_mount_point* mount_point, const char * path, ui
     memset(dir_buff, 0, cluster_byte_size);
     // Add .
     dir_buff[0].short_entry = short_dir_entry;
-    memset(&dir_buff[0].short_entry.nameext, ' ', FAT_SHORT_NAME_LEN+FAT_SHORT_EXT_LEN);
+    memset(dir_buff[0].short_entry.nameext, ' ', FAT_SHORT_NAME_LEN+FAT_SHORT_EXT_LEN);
     dir_buff[0].short_entry.name[0] = '.';
     // Add ..
     dir_buff[1] = dir_buff[0];
@@ -1426,6 +1426,7 @@ static int fat32_mkdir(struct fs_mount_point* mount_point, const char * path, ui
     dir_buff[1].short_entry.cluster_hi = parent_cluster >> 16;
     dir_buff[1].short_entry.cluster_lo = parent_cluster & 0x0000FFFF;
     int64_t res = fat32_write_clusters(meta, first_new_cluster, 1, (uint8_t*) dir_buff);
+    free(dir_buff);
     if(res < 0) {
         return -EIO;
     }
@@ -1434,6 +1435,9 @@ static int fat32_mkdir(struct fs_mount_point* mount_point, const char * path, ui
 
 static int32_t fat32_is_cluster_opened(fat32_meta_t* meta, uint32_t cluster)
 {
+    if(cluster <= 1) {
+        return 0;
+    }
     for(int i=0;i<FAT32_N_OPEN_FILE;i++) {
         uint32_t opened_cluster =  meta->file_table[i].direntry.cluster_lo + (meta->file_table[i].direntry.cluster_hi << 16);
         if(cluster == opened_cluster) {
@@ -1684,16 +1688,14 @@ static int fat32_truncate(struct fs_mount_point* mount_point, const char * path,
         uint32_t last_remaining_cluster;
         if(first_cluster_to_free == first_cluster) {
             last_remaining_cluster = 0;
+            file_entry.direntry.cluster_lo = 0;
+            file_entry.direntry.cluster_hi = 0;
         } else {
             last_remaining_cluster = fat32_index_cluster_chain(meta, first_cluster, -clusters_to_free - 1);
         }
         int32_t free_res = fat32_free_cluster(meta, last_remaining_cluster, first_cluster_to_free, 0);
         if(free_res < 0) {
             return free_res;
-        }
-        if(cluster_count == 0) {
-            file_entry.direntry.cluster_lo = 0;
-            file_entry.direntry.cluster_hi = 0;
         }
     }
     file_entry.direntry.size = size;

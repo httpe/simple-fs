@@ -1,38 +1,43 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
+
+#include <stddef.h>
 #include <assert.h>
+#include <string.h>
+#include <stdlib.h>
 
-#include "block_io.h"
-#include "fat.h"
-#include "make_fs.h"
-#include "file_system.h"
-#include "file_descriptor.h"
+#include "proc.h"
+
+#include "stat.h"
 #include "errno.h"
+#include "block_io.h"
 
-#define SEEK_SET 1
-#define SEEK_CUR 2
-#define SEEK_END 3
+#include "fat.h"
+
+#include "vfs.h"
+
+
+static uint32_t next_mount_point_id = 1;
 
 #define N_MOUNT_POINT 16
+static fs_mount_point mount_points[N_MOUNT_POINT];
+static file_system fs[N_FILE_SYSTEM_TYPES];
 
-uint32_t next_mount_point_id = 1;
-
-fs_mount_point mount_points[N_MOUNT_POINT];
-file_system fs[N_FILE_SYSTEM_TYPES];
-const char* root_path = "/";
+static const char* root_path = "/";
 
 // Global (kernel) file table for all opened files
+#define N_FILE_STRUCTURE 128
 struct {
   file file[N_FILE_STRUCTURE];
 } file_table;
 
-proc current_process;
 
+// stub for process related routines
+proc current_process;
 proc* curr_proc()
 {
     return &current_process;
 }
+
+//////////////////////////////////////
 
 fs_mount_point* find_mount_point(const char* path, const char**remaining_path)
 {
@@ -307,7 +312,7 @@ int32_t fs_open(const char * path, int32_t flags)
     proc* p = curr_proc();
     int fd;
     for(fd=0; fd<N_FILE_DESCRIPTOR_PER_PROCESS;fd++) {
-        if(p->opended_files[fd] == NULL) {
+        if(p->files[fd] == NULL) {
             break;
         }
     }
@@ -331,7 +336,7 @@ int32_t fs_open(const char * path, int32_t flags)
         .readable = !(flags & O_WRONLY),
         .writable = (flags & O_WRONLY) || (flags & O_RDWR)
     };
-    p->opended_files[fd] = f;
+    p->files[fd] = f;
 
     // Return file descriptor
     return fd;
@@ -343,7 +348,7 @@ struct fs_dir_filler_info {
     uint32_t entry_written;
 };
 
-int dir_filler(fs_dir_filler_info* filler_info, const char *name, const struct fs_stat *st)
+static int dir_filler(fs_dir_filler_info* filler_info, const char *name, const struct fs_stat *st)
 {
     (void) st;
 
@@ -351,7 +356,7 @@ int dir_filler(fs_dir_filler_info* filler_info, const char *name, const struct f
         // buffer full
         return 1;
     } else {
-        uint len = strlen(name);
+        uint32_t len = strlen(name);
         if(len > FS_MAX_FILENAME_LEN) {
             len = FS_MAX_FILENAME_LEN;
         }
@@ -382,13 +387,13 @@ int32_t fs_readdir(const char * path, int64_t entry_offset, fs_dirent* buf, uint
     return filler_info.entry_written;
 }
 
-file* fd2file(int32_t fd)
+static file* fd2file(int32_t fd)
 {
     proc* p = curr_proc();
-    if(fd < 0 || fd >= N_FILE_STRUCTURE || p->opended_files[fd] == NULL || p->opended_files[fd]->ref == 0) {
+    if(fd < 0 || fd >= N_FILE_STRUCTURE || p->files[fd] == NULL || p->files[fd]->ref == 0) {
         return NULL;
     }
-    file* f = p->opended_files[fd];
+    file* f = p->files[fd];
     return f;
 }
 
@@ -410,13 +415,13 @@ int32_t fs_close(int32_t fd)
         return res;
     }
 
-    p->opended_files[fd]->ref--;
-    if(p->opended_files[fd]->ref == 0) {
-        free(p->opended_files[fd]->path);
+    p->files[fd]->ref--;
+    if(p->files[fd]->ref == 0) {
+        free(p->files[fd]->path);
         memset(f, 0, sizeof(*f));
     }
 
-    p->opended_files[fd] = NULL;
+    p->files[fd] = NULL;
     
     return 0;
 }
@@ -442,36 +447,6 @@ int64_t fs_read(int32_t fd, void *buf, uint32_t size)
     return res;
 }
 
-int64_t fs_lseek(int32_t fd, int64_t offset, int32_t whence)
-{
-    file* f = fd2file(fd);
-    if(f == NULL) {
-        return -EBADF;
-    }
-
-    if(whence == SEEK_CUR) {
-        f->offset += offset;
-    } else if(whence == SEEK_SET) {
-        f->offset = offset;
-    } else if(whence == SEEK_END) {
-        fs_stat st = {0};
-        if(f->mount_point->operations.getattr == NULL) {
-            // if file system does not support this operation
-            return -EPERM;
-        }
-        int res = f->mount_point->operations.getattr(f->mount_point, f->path, &st, NULL);
-        if(res<0){
-            return res;
-        }
-        f->offset = st.size + offset;
-    } else {
-        return -EPERM;
-    }
-
-    return 0;
-    
-}
-
 int64_t fs_write(int32_t fd, void *buf, uint32_t size)
 {
     file* f = fd2file(fd);
@@ -493,131 +468,41 @@ int64_t fs_write(int32_t fd, void *buf, uint32_t size)
     return res;
 }
 
-int main(int argc, char *argv[])
+int64_t fs_lseek(int32_t fd, int64_t offset, int32_t whence)
 {
-    (void) argc;
-    (void) argv;
-
-    const char* image_path = "vfs_image.bin";
-    int make_fs = 1;
-    const char* make_fs_bootloader_path = NULL;
-
-    int res = initialize_block_storage(image_path);
-    if(res < 0) {
-        printf("Disk image failed to initialize: %d\n", res);
-        exit(1);
+    file* f = fd2file(fd);
+    if(f == NULL) {
+        return -EBADF;
     }
 
-    // Assume to use first block storage
-    block_storage_t* storage = get_block_storage(0);
-
-    if(make_fs) {
-        printf("Formatting file system...\n");
-        int32_t res = fat32_make_fs(storage, make_fs_bootloader_path);
-        if(res < 0) {
-            printf("Failed to format the file system: %d\n", res);
-            exit(1);
+    if(whence == LSEEK_WHENCE_CUR) {
+        f->offset += offset;
+    } else if(whence == LSEEK_WHENCE_SET) {
+        f->offset = offset;
+    } else if(whence == LSEEK_WHENCE_END) {
+        fs_stat st = {0};
+        if(f->mount_point->operations.getattr == NULL) {
+            // if file system does not support this operation
+            return -EPERM;
         }
+        int res = f->mount_point->operations.getattr(f->mount_point, f->path, &st, NULL);
+        if(res<0){
+            return res;
+        }
+        f->offset = st.size + offset;
+    } else {
+        return -EPERM;
     }
 
+    return 0;
+    
+}
+
+int32_t init_vfs()
+{
     // initialize all supported file systems
     fs[0] = (struct file_system) {.type = FILE_SYSTEM_FAT_32};
-    res = fat32_init(&fs[0]);
-    assert(res == 0);
-
-    fs_mount_option mount_option = {0};
-    fs_mount_point* mp = NULL;
-    res = fs_mount(storage, "/home", FILE_SYSTEM_FAT_32, mount_option, NULL, &mp);
-    assert(res == 0);
-
-    // try resolving mount point
-    const char* rem_path = NULL;
-    fs_mount_point* mp1 = find_mount_point("/home/my_file", &rem_path);
-    assert(mp1 == mp);
-    assert(strcmp("/my_file", rem_path) == 0);
-
-    // test mknod/mkdir
-    int res_mkdir = fs_mkdir("/home/my_dir", 0);
-    assert(res_mkdir == 0);
-    int res_mknod = fs_mknod("/home/my_dir/my_file", 0);
-    assert(res_mknod == 0);
-
-    // test open/read/write/lseek/close
-    char buf_in[512], buf_out[512];
-    strcpy(buf_in, "Hello World!");
-    int fd = fs_open("/home/my_dir/my_file", 0);
-    assert(fd == 0);
-    int written = fs_write(fd, buf_in, strlen(buf_in) + 1);
-    assert(written == 13);
-    int close_res = fs_close(fd);
-    assert(close_res == 0);
-    fd = fs_open("/home/my_dir/my_file", 0);
-    assert(fd == 0);
-    int read = fs_read(fd, buf_out, 2);
-    assert(read == 2);
-    read = fs_read(fd, buf_out + 2, 100);
-    assert(read == 11);
-    assert(strcmp(buf_out, buf_in) == 0);
-    int lseek_res = fs_lseek(fd, -5, SEEK_END);
-    assert(lseek_res == 0);
-    read = fs_read(fd, buf_out, 100);
-    assert(read == 5);
-    assert(strcmp(buf_out, buf_in + strlen(buf_in) - 5 + 1) == 0);
-    close_res = fs_close(fd);
-    assert(close_res == 0);
-
-    // test getattr
-    fs_stat stat = {0};
-    int res_getattr = fs_getattr("/home/my_dir/my_file", &stat);
-    assert(res_getattr == 0);
-    assert(stat.size == 13);
-
-    // test truncate
-    int res_truncate = fs_truncate("/home/my_dir/my_file", 100);
-    assert(res_truncate == 0);
-    res_getattr = fs_getattr("/home/my_dir/my_file", &stat);
-    assert(stat.size == 100);
-    res_truncate = fs_truncate("/home/my_dir/my_file", 0);
-    assert(res_truncate == 0);
-    res_getattr = fs_getattr("/home/my_dir/my_file", &stat);
-    assert(res_getattr == 0);
-    assert(stat.size == 0);
-
-    // test readdir
-    fs_dirent dir_buf[10];
-    int dirent_read = fs_readdir("/home", 0, dir_buf, sizeof(fs_dirent)*10);
-    assert(dirent_read == 1);
-    assert(strcmp(dir_buf[0].name, "my_dir") == 0);
-    dirent_read = fs_readdir("/home/my_dir", 0, dir_buf, sizeof(fs_dirent)*10);
-    assert(dirent_read == 3);
-    assert(strcmp(dir_buf[0].name, ".") == 0);
-    assert(strcmp(dir_buf[1].name, "..") == 0);
-    assert(strcmp(dir_buf[2].name, "my_file") == 0);
-
-    // test rename
-    int res_rename = fs_rename("/home/my_dir/my_file", "/home/my_dir/my_new_file", 0);
-    assert(res_rename == 0);
-    dirent_read = fs_readdir("/home/my_dir", 0, dir_buf, sizeof(fs_dirent)*10);
-    assert(dirent_read == 3);
-    assert(strcmp(dir_buf[0].name, ".") == 0);
-    assert(strcmp(dir_buf[1].name, "..") == 0);
-    assert(strcmp(dir_buf[2].name, "my_new_file") == 0);
-
-    // test unlink/rmdir
-    int res_unlink = fs_unlink("/home/my_dir/my_new_file");
-    assert(res_unlink == 0);
-    dirent_read = fs_readdir("/home/my_dir", 0, dir_buf, sizeof(fs_dirent)*10);
-    assert(dirent_read == 2);
-    int res_rmdir = fs_rmdir("/home/my_dir");
-    assert(res_rmdir == 0);
-    dirent_read = fs_readdir("/home", 0, dir_buf, sizeof(fs_dirent)*10);
-    assert(dirent_read == 0);
-
-    //test unmount
-    int unmount_res = fs_unmount("/home");
-    assert(unmount_res == 0);
-    fs_mount_point* mp_end = find_mount_point("/home/my_file", &rem_path);
-    assert(mp_end == NULL);
-
-	return 0;
+    int res = fat32_init(&fs[0]);
+    
+    return res;
 }

@@ -21,11 +21,12 @@ fuse_fs.o \
 
 VFS_OBJS=\
 vfs.o \
+test_vfs.o \
 
 
 .PHONY: all clean
 
-all: simple_fs_block fuse_fs vfs
+all: simple_fs_block fuse_fs test_vfs
 
 # Ref: https://www.gnu.org/software/make/manual/html_node/Automatic-Variables.html#Automatic-Variables
 simple_fs_block: $(SIMPLE_FS_OBJS) $(SHARED_OBJS)
@@ -34,7 +35,7 @@ simple_fs_block: $(SIMPLE_FS_OBJS) $(SHARED_OBJS)
 fuse_fs: $(FUSE_OBJS) $(MAKE_FS_OBJS) $(FAT_OBJS) $(SHARED_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
-vfs: $(VFS_OBJS) $(MAKE_FS_OBJS) $(FAT_OBJS) $(SHARED_OBJS)
+test_vfs: $(VFS_OBJS) $(MAKE_FS_OBJS) $(FAT_OBJS) $(SHARED_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
 # compile and generate dependency info (*.d) by -MD
@@ -50,7 +51,7 @@ clean:
 	rm -f *.o
 	rm -f simple_fs_block
 	rm -f fuse_fs
-	rm -f vfs
+	rm -f vfs test_vfs
 	rm -f *.d
 
 # include make rules from *.d files, which dictate the dependency of c files on header

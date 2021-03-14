@@ -4,18 +4,65 @@
 #include <stdint.h>
 
 #include "block_io.h"
-
-#include "time.h"
 #include "stat.h"
 
-typedef struct mbr_partition_table_entry {
-    uint8_t driver_attributes;
-    uint8_t CHS_partition_start[3];
-    uint8_t partition_type;
-    uint8_t CHS_partition_end[3];
-    uint32_t LBA_partition_start;
-    uint32_t partition_sector_count;
-} __attribute__ ((__packed__)) mbr_partition_table_entry_t;
+
+////////////////////////////////////////
+//
+//  FS level structures
+//
+////////////////////////////////////////
+
+
+#define N_FILE_SYSTEM_TYPES 1
+enum file_system_type {
+    FILE_SYSTEM_FAT_32
+};
+
+enum file_system_status {
+    FS_STATUS_NOT_INITIALIZED,
+    FS_STATUS_READY
+};
+
+struct fs_mount_point; // defined below
+typedef struct file_system {
+    enum file_system_status status;
+    enum file_system_type type;
+    void* fs_global_meta;
+    int (*mount) (struct fs_mount_point* mount_point);
+    int (*unmount) (struct fs_mount_point* mount_point);
+} file_system;
+
+
+////////////////////////////////////////
+//
+//  VFS mount point
+//
+////////////////////////////////////////
+
+typedef struct fs_mount_option {
+    uint32_t flag; // not yet used
+} fs_mount_option;
+
+typedef struct fs_mount_point {
+    uint32_t id;
+    struct file_system* fs;
+    block_storage_t* storage;
+    char* mount_target;
+    void* fs_option; 
+    struct fs_mount_option mount_option;
+
+    void* fs_meta; // File system internal data structure
+    struct file_system_operations operations;
+} fs_mount_point;
+
+
+////////////////////////////////////////
+//
+//  FUSE-like FS interface
+//
+////////////////////////////////////////
+
 
 // Mimic FUSE struct fuse_file_info
 typedef struct fs_file_info {
@@ -50,48 +97,46 @@ typedef struct file_system_operations {
 	int (*readdir) (struct fs_mount_point* mount_point, const char * path, int64_t offset, struct fs_dir_filler_info* filler_info, fs_dir_filler filler);
 } file_system_operations_t;
 
-typedef struct fs_mount_option {
-    uint32_t flag; // not yet used
-} fs_mount_option;
 
-#define N_FILE_SYSTEM_TYPES 1
-enum file_system_type {
-    FILE_SYSTEM_FAT_32
+////////////////////////////////////////
+//
+//  File level structures
+//
+////////////////////////////////////////
+
+
+enum file_type {
+  FILE_TYPE_INODE
 };
 
-enum file_system_status {
-    FS_STATUS_NOT_INITIALIZED,
-    FS_STATUS_READY
-};
+typedef struct file {
+  enum file_type type;
+  char* path;               /* path into the mount point */
+  int32_t open_flags;
+  struct fs_mount_point* mount_point;        /* Mount Point ID  */
+  uint64_t inum;                  /* File serial number.	*/
+  int32_t ref;                    /* Reference count */
+  char readable;
+  char writable;
+  uint32_t offset;
+} file;
 
-struct fs_mount_point;
-typedef struct file_system {
-    enum file_system_status status;
-    enum file_system_type type;
-    void* fs_global_meta;
-    int (*mount) (struct fs_mount_point* mount_point);
-    int (*unmount) (struct fs_mount_point* mount_point);
-} file_system;
 
-typedef struct fs_mount_point {
-    uint32_t id;
-    struct file_system* fs;
-    block_storage_t* storage;
-    char* mount_target;
-    void* fs_option; 
-    struct fs_mount_option mount_option;
+////////////////////////////////////////
+//
+//  For parsing partition table
+//
+////////////////////////////////////////
 
-    void* fs_meta; // File system internal data structure
-    struct file_system_operations operations;
-} fs_mount_point;
 
-#define FS_MAX_FILENAME_LEN 260
-typedef struct fs_dirent {
-    char name[FS_MAX_FILENAME_LEN]; // file name, max len = 260 + null terminator (referencing FAT32 max file name)
-} fs_dirent;
-
-// int32_t fs_mount(block_storage_t* storage, const char* target, enum file_system_type file_system_type, 
-//             struct fs_mount_option option, const void* fs_option, fs_mount_point* mount_point);
+typedef struct mbr_partition_table_entry {
+    uint8_t driver_attributes;
+    uint8_t CHS_partition_start[3];
+    uint8_t partition_type;
+    uint8_t CHS_partition_end[3];
+    uint32_t LBA_partition_start;
+    uint32_t partition_sector_count;
+} __attribute__ ((__packed__)) mbr_partition_table_entry_t;
 
 
 #endif

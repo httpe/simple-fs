@@ -1,6 +1,7 @@
 simple_fs
 simple_fs_block
 vfs
+test_vfs
 *.bin
 *.fat
 fuse_fs

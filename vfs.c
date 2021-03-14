@@ -79,7 +79,11 @@ fs_mount_point* find_mount_point(const char* path, const char**remaining_path)
             }
         }
     }
-    return &mount_points[max_match_mount_point_id];
+    if(max_match_mount_point_id == -1) {
+        return NULL;
+    } else {
+        return &mount_points[max_match_mount_point_id];
+    }
 }
 
 
@@ -128,6 +132,21 @@ int32_t fs_mount(block_storage_t* storage, const char* target, enum file_system_
     }
     // No mount point available
     return -1;
+}
+
+int32_t fs_unmount(const char* mount_root)
+{
+    const char* remaining_path = NULL;
+    fs_mount_point* mp = find_mount_point(mount_root, &remaining_path);
+    if(mp == NULL || strcmp(remaining_path, root_path) != 0) {
+        return -ENXIO;
+    }
+    int32_t res = mp->fs->unmount(mp);
+    if(res < 0) {
+        return res;
+    }
+    memset(mp, 0, sizeof(*mp));
+    return 0;
 }
 
 int64_t fs_getattr(const char * path, struct fs_stat * stat)
@@ -543,7 +562,6 @@ int main(int argc, char *argv[])
     assert(lseek_res == 0);
     read = fs_read(fd, buf_out, 100);
     assert(read == 5);
-    printf("%s", buf_out);
     assert(strcmp(buf_out, buf_in + strlen(buf_in) - 5 + 1) == 0);
     close_res = fs_close(fd);
     assert(close_res == 0);
@@ -594,6 +612,12 @@ int main(int argc, char *argv[])
     assert(res_rmdir == 0);
     dirent_read = fs_readdir("/home", 0, dir_buf, sizeof(fs_dirent)*10);
     assert(dirent_read == 0);
+
+    //test unmount
+    int unmount_res = fs_unmount("/home");
+    assert(unmount_res == 0);
+    fs_mount_point* mp_end = find_mount_point("/home/my_file", &rem_path);
+    assert(mp_end == NULL);
 
 	return 0;
 }

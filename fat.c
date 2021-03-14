@@ -1890,9 +1890,16 @@ static int32_t fat32_mount(fs_mount_point* mount_point)
     return 0;
 }
 
+static int32_t fat32_unmount(fs_mount_point* mount_point)
+{
+    free(mount_point->fs_meta);
+    return 0;
+}
+
 int32_t fat32_init(struct file_system* fs)
 {
     fs->mount = fat32_mount;
+    fs->unmount = fat32_unmount;
     fs->fs_global_meta = NULL;
     fs->status = FS_STATUS_READY;
     return 0;

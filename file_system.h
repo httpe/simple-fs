@@ -70,7 +70,7 @@ typedef struct file_system {
     enum file_system_type type;
     void* fs_global_meta;
     int (*mount) (struct fs_mount_point* mount_point);
-    //TODO: umount
+    int (*unmount) (struct fs_mount_point* mount_point);
 } file_system;
 
 typedef struct fs_mount_point {

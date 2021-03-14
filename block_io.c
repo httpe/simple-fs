@@ -28,7 +28,7 @@ static file_storage_t disk_image_internal_info;
 static block_storage* storage_list[MAX_STORAGE_DEV_COUNT];
 static uint32_t n_storage;
 
-int64_t read_blocks(block_storage* storage, uint8_t* buff,  uint32_t LBA, uint32_t block_count)
+int64_t read_blocks(block_storage* storage, void* buff,  uint32_t LBA, uint32_t block_count)
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_RDONLY);
@@ -45,7 +45,7 @@ int64_t read_blocks(block_storage* storage, uint8_t* buff,  uint32_t LBA, uint32
     return res;
 }
 
-int64_t write_blocks(block_storage* storage, uint32_t LBA, uint32_t block_count, const uint8_t* buff)
+int64_t write_blocks(block_storage* storage, uint32_t LBA, uint32_t block_count, const void* buff)
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_WRONLY);

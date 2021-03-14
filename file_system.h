@@ -36,29 +36,6 @@ typedef struct file_system {
 
 ////////////////////////////////////////
 //
-//  VFS mount point
-//
-////////////////////////////////////////
-
-typedef struct fs_mount_option {
-    uint32_t flag; // not yet used
-} fs_mount_option;
-
-typedef struct fs_mount_point {
-    uint32_t id;
-    struct file_system* fs;
-    block_storage_t* storage;
-    char* mount_target;
-    void* fs_option; 
-    struct fs_mount_option mount_option;
-
-    void* fs_meta; // File system internal data structure
-    struct file_system_operations operations;
-} fs_mount_point;
-
-
-////////////////////////////////////////
-//
 //  FUSE-like FS interface
 //
 ////////////////////////////////////////
@@ -95,7 +72,33 @@ typedef struct file_system_operations {
 	int (*write) (struct fs_mount_point* mount_point, const char * path, const char *buf, uint64_t size, int64_t offset, struct fs_file_info *);
 	int (*release) (struct fs_mount_point* mount_point, const char * path, struct fs_file_info *);
 	int (*readdir) (struct fs_mount_point* mount_point, const char * path, int64_t offset, struct fs_dir_filler_info* filler_info, fs_dir_filler filler);
-} file_system_operations_t;
+} file_system_operations;
+
+////////////////////////////////////////
+//
+//  VFS mount point
+//
+////////////////////////////////////////
+
+typedef struct fs_mount_option {
+    uint32_t flag; // not yet used
+} fs_mount_option;
+
+struct file_system_operations;
+typedef struct fs_mount_point {
+    uint32_t id;
+    struct file_system* fs;
+    block_storage_t* storage;
+    char* mount_target;
+    void* fs_option; 
+    struct fs_mount_option mount_option;
+
+    void* fs_meta; // File system internal data structure
+    struct file_system_operations operations;
+} fs_mount_point;
+
+
+
 
 
 ////////////////////////////////////////
@@ -136,7 +139,7 @@ typedef struct mbr_partition_table_entry {
     uint8_t CHS_partition_end[3];
     uint32_t LBA_partition_start;
     uint32_t partition_sector_count;
-} __attribute__ ((__packed__)) mbr_partition_table_entry_t;
+} __attribute__ ((__packed__)) mbr_partition_table_entry;
 
 
 #endif

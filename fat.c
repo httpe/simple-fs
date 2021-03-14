@@ -98,7 +98,7 @@ static int32_t fat32_get_meta(fat32_meta_t* meta)
         goto free_buff;
     }
     uint32_t partition_start_lba = 0;
-    mbr_partition_table_entry_t* partition_table = (mbr_partition_table_entry_t*) &buff[0x1BE];
+    mbr_partition_table_entry* partition_table = (mbr_partition_table_entry*) &buff[0x1BE];
     for(int i=0;i<4;i++) {
         if(partition_table[i].driver_attributes == 0x80 && partition_table[i].partition_type == 0x0C) {
             if(partition_table[i].LBA_partition_start > 0 && partition_table[i].partition_sector_count>0) {

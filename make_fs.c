@@ -40,8 +40,8 @@ int32_t fat32_make_fs(block_storage_t* storage, const char* bootloader_path)
             }
         }
 
-        mbr_partition_table_entry_t* first_partition_entry = (mbr_partition_table_entry_t*) &bootloader[0x1BE];
-        *first_partition_entry = (mbr_partition_table_entry_t) {
+        mbr_partition_table_entry* first_partition_entry = (mbr_partition_table_entry*) &bootloader[0x1BE];
+        *first_partition_entry = (mbr_partition_table_entry) {
             .driver_attributes = 0x80, // active / bootable
             .CHS_partition_start = {0}, // CHS not filled
             .partition_type = 0x0C, // 0C: WIN95 OSR2 FAT32, LBA-mapped

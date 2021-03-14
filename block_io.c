@@ -22,13 +22,13 @@ typedef struct file_storage {
     char image_path[4096];
 } file_storage_t;
 
-static block_storage_t disk_image_storage;
+static block_storage disk_image_storage;
 static file_storage_t disk_image_internal_info;
 
-static block_storage_t* storage_list[MAX_STORAGE_DEV_COUNT];
+static block_storage* storage_list[MAX_STORAGE_DEV_COUNT];
 static uint32_t n_storage;
 
-int64_t read_blocks(block_storage_t* storage, uint8_t* buff,  uint32_t LBA, uint32_t block_count)
+int64_t read_blocks(block_storage* storage, uint8_t* buff,  uint32_t LBA, uint32_t block_count)
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_RDONLY);
@@ -45,7 +45,7 @@ int64_t read_blocks(block_storage_t* storage, uint8_t* buff,  uint32_t LBA, uint
     return res;
 }
 
-int64_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_count, const uint8_t* buff)
+int64_t write_blocks(block_storage* storage, uint32_t LBA, uint32_t block_count, const uint8_t* buff)
 {
     file_storage_t* fs = (file_storage_t*) storage->internal_info;
     int fd = open(fs->image_path, O_WRONLY);
@@ -62,7 +62,7 @@ int64_t write_blocks(block_storage_t* storage, uint32_t LBA, uint32_t block_coun
     return res;
 }
 
-block_storage_t* initialize_disk_image(const char* image_path) 
+block_storage* initialize_disk_image(const char* image_path) 
 {
     uint32_t image_size;
     // Create disk image if not exist
@@ -90,7 +90,7 @@ block_storage_t* initialize_disk_image(const char* image_path)
     // Use absolute path since FUSE will change curent dirrectory to root dir /
     strcpy(disk_image_internal_info.image_path, realpath(image_path, NULL));
 
-    disk_image_storage = (block_storage_t) {
+    disk_image_storage = (block_storage) {
         .device_id = 0, 
         .type=BLK_STORAGE_TYP_IMAGE_FILE, 
         .block_size=BLOCK_SIZE, 
@@ -103,7 +103,7 @@ block_storage_t* initialize_disk_image(const char* image_path)
     return &disk_image_storage;
 }
 
-block_storage_t* get_block_storage(uint32_t device_id)
+block_storage* get_block_storage(uint32_t device_id)
 {
     for(uint32_t i=0; i<=n_storage; i++) {
         if(storage_list[i]->device_id == device_id) {
@@ -115,7 +115,7 @@ block_storage_t* get_block_storage(uint32_t device_id)
 
 int32_t initialize_block_storage(const char* disk_image_path)
 {
-    block_storage_t* storage = initialize_disk_image(disk_image_path);
+    block_storage* storage = initialize_disk_image(disk_image_path);
     if(storage == NULL) {
         return -1;
     }

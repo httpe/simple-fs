@@ -92,7 +92,7 @@ fs_mount_point* find_mount_point(const char* path, const char**remaining_path)
 }
 
 
-int32_t fs_mount(block_storage_t* storage, const char* target, enum file_system_type file_system_type, 
+int32_t fs_mount(block_storage* storage, const char* target, enum file_system_type file_system_type, 
             fs_mount_option option, void* fs_option, fs_mount_point** mount_point)
 {
     int i;

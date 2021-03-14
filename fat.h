@@ -39,7 +39,7 @@ typedef struct fat32_bootsector
 	uint8_t		    fat_type_label[8];
     uint8_t         boot_code[420];
     uint16_t        mbr_signature;
-}__attribute__((packed)) fat32_bootsector_t;
+}__attribute__((packed)) fat32_bootsector;
 
 // Source: https://github.com/aroulin/FAT32-FS-Driver
 #define FAT_SHORT_NAME_LEN 8
@@ -63,7 +63,7 @@ typedef struct fat32_direntry_short {
 	/*24*/	uint16_t	mtime_date;
 	/*26*/	uint16_t	cluster_lo;
 	/*28*/	uint32_t	size;
-} __attribute__ ((__packed__)) fat32_direntry_short_t;
+} __attribute__ ((__packed__)) fat32_direntry_short;
 
 #define FAT32_USC2_FILE_NAME_LEN_PER_LFN 13
 typedef struct fat32_direntry_long {
@@ -75,25 +75,25 @@ typedef struct fat32_direntry_long {
 	/*14*/	uint16_t	name2[6];
 	/*26*/	uint16_t	reserved2;
 	/*28*/	uint16_t	name3[2];
-} __attribute__ ((__packed__)) fat32_direntry_long_t;
+} __attribute__ ((__packed__)) fat32_direntry_long;
 
 typedef union {
-    fat32_direntry_short_t short_entry;
-    fat32_direntry_long_t long_entry;
+    fat32_direntry_short short_entry;
+    fat32_direntry_long long_entry;
 } fat32_direntry_t;
 
 #define FAT32_MAX_LFN_ENTRY_PER_FILE 0x14
 #define FAT32_LONG_NAME_MAX_LEN_USC2 (FAT32_USC2_FILE_NAME_LEN_PER_LFN * FAT32_MAX_LFN_ENTRY_PER_FILE)
 #define FAT32_FILENAME_SIZE (FAT32_LONG_NAME_MAX_LEN_USC2*2)
 typedef struct fat32_file_entry {
-    fat32_direntry_short_t direntry;
+    fat32_direntry_short direntry;
     char filename[FAT32_LONG_NAME_MAX_LEN_USC2*2+1];// +1: space for null terminator
 	// uint32_t dir_entry_cluster_start; // the cluster containing the start of this entry
 	// uint32_t dir_entry_idx_start; // idx relative to the cluster
 	uint32_t dir_cluster; // first cluster of the dir
 	uint32_t first_dir_entry_idx; // an index into all clusters constitute the dir
 	uint32_t dir_entry_count;
-} fat32_file_entry_t;
+} fat32_file_entry;
 
 
 typedef enum {
@@ -115,21 +115,21 @@ typedef struct fat32_fsinfo {
     uint32_t next_free_cluster;
     uint8_t reserved2[12];
     uint32_t trailing_signature;
-} __attribute__ ((__packed__)) fat32_fsinfo_t;
+} __attribute__ ((__packed__)) fat32_fsinfo;
 
 #define FAT32_N_OPEN_FILE 100
 typedef struct fat32_meta {
-    fat32_bootsector_t* bootsector;
-    fat32_fsinfo_t* fs_info;
+    fat32_bootsector* bootsector;
+    fat32_fsinfo* fs_info;
     uint32_t* fat;
-	block_storage_t* storage;
-	fat32_file_entry_t file_table[FAT32_N_OPEN_FILE];
-} fat32_meta_t;
+	block_storage* storage;
+	fat32_file_entry file_table[FAT32_N_OPEN_FILE];
+} fat32_meta;
 
 typedef struct fat_cluster {
 	uint32_t curr;
 	uint32_t next;
-} fat_cluster_t;
+} fat_cluster;
 
 typedef enum fat_cluster_status {
     FAT_CLUSTER_FREE = 0,
@@ -137,7 +137,7 @@ typedef enum fat_cluster_status {
     FAT_CLUSTER_RESERVED = 0x00000001,
     FAT_CLUSTER_EOC = 0xFFFFFFFF,
     FAT_CLUSTER_USED = 0x00000002
-} fat_cluster_status_t;
+} fat_cluster_status;
 
 typedef struct fat_dir_iterator {
 	uint32_t first_cluster;
@@ -145,7 +145,7 @@ typedef struct fat_dir_iterator {
 	uint32_t entry_per_cluster;
 	uint32_t current_dir_entry_idx; // an index into all clusters constitute the dir
 	fat32_direntry_t* dir_entries;
-} fat_dir_iterator_t;
+} fat_dir_iterator;
 
 typedef enum fat_iterate_dir_status {
 	FAT_DIR_ITER_VALID_ENTRY,
@@ -154,7 +154,7 @@ typedef enum fat_iterate_dir_status {
 	FAT_DIR_ITER_NO_MORE_ENTRY,
 	FAT_DIR_ITER_FREE_ENTRY,
 	FAT_DIR_ITER_ERROR
-} fat_iterate_dir_status_t;
+} fat_iterate_dir_status;
 
 typedef enum fat_resolve_path_status {
 	FAT_PATH_RESOLVE_ROOT_DIR,
@@ -162,7 +162,7 @@ typedef enum fat_resolve_path_status {
 	FAT_PATH_RESOLVE_ERROR,
 	FAT_PATH_RESOLVE_NOT_FOUND,
 	FAT_PATH_RESOLVE_INVALID_PATH
-} fat_resolve_path_status_t;
+} fat_resolve_path_status;
 
 enum fat32_rm_type {
     FAT32_RM_FILE,

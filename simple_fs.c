@@ -28,7 +28,7 @@
 
 #include "simple_fs.h"
 
-fs_header_t fs_header;
+fs_header header;
 
 /*
  * Command line options
@@ -66,15 +66,15 @@ static int write_header() {
     int fd = open(options.image_path, O_RDWR);
     if(fd == -1)
         return -errno;
-    int written = write(fd, (void*) &fs_header, sizeof(fs_header));
-    if(written != sizeof(fs_header))
+    int written = write(fd, (void*) &header, sizeof(header));
+    if(written != sizeof(header))
         return -1;
     close(fd);
     return 0;
 }
 
 
-static int match_path(fs_header_t* header, const char* path, file_entry_t** entry) {
+static int match_path(fs_header* header, const char* path, file_entry** entry) {
     for(int i=0; i<FS_MAX_FILE_COUNT; i++) {
         if(strcmp(header->file_table[i].path, path) == 0) {
             *entry = &header->file_table[i];
@@ -97,8 +97,8 @@ static int fs_getattr(const char *path, struct stat *stbuf,
 
 	memset(stbuf, 0, sizeof(struct stat));
     
-    file_entry_t* entry;
-    int file_idx = match_path(&fs_header, path, &entry);
+    file_entry* entry;
+    int file_idx = match_path(&header, path, &entry);
 
     if(file_idx < 0) {
         return -ENOENT;
@@ -160,8 +160,8 @@ static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	// if (strcmp(path, "/") != 0)
 	// 	return -ENOENT;
 
-    file_entry_t* entry;
-    int file_idx = match_path(&fs_header, path, &entry);
+    file_entry* entry;
+    int file_idx = match_path(&header, path, &entry);
 	if (file_idx < 0 || !entry->attr.is_dir)
 		return -ENOENT;
 
@@ -169,7 +169,7 @@ static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	filler(buf, "..", NULL, 0, 0);
 
     for(int i=0; i<FS_MAX_FILE_COUNT; i++) {
-        const char* filename = get_filename(path, fs_header.file_table[i].path);
+        const char* filename = get_filename(path, header.file_table[i].path);
         if(filename != NULL) {
             filler(buf, filename, NULL, 0, 0);
         }
@@ -182,8 +182,8 @@ static int fs_open(const char *path, struct fuse_file_info *fi)
 {
     printf("fs_open: %s\n", path);
 
-    file_entry_t* entry;
-    int file_idx = match_path(&fs_header, path, &entry);
+    file_entry* entry;
+    int file_idx = match_path(&header, path, &entry);
 
 	if (file_idx < 0)
 		return -ENOENT;
@@ -208,8 +208,8 @@ static int fs_read(const char *path, char *buf, size_t size, off_t offset,
 	printf("fs_read: %s\n", path);
 
 	(void) fi;
-    file_entry_t* entry;
-    int file_idx = match_path(&fs_header, path, &entry);
+    file_entry* entry;
+    int file_idx = match_path(&header, path, &entry);
 
 	if (file_idx < 0)
 		return -ENOENT;
@@ -240,7 +240,7 @@ static int fs_read(const char *path, char *buf, size_t size, off_t offset,
         size = FS_DATA_BLOCK_LEN - offset;
     }
 
-    int file_offset = sizeof(fs_header_t) + FS_DATA_BLOCK_LEN*file_idx;
+    int file_offset = sizeof(fs_header) + FS_DATA_BLOCK_LEN*file_idx;
 	res = pread(fd, buf, size, file_offset + offset);
 	if (res == -1)
 		res = -errno;
@@ -257,8 +257,8 @@ static int fs_write(const char *path, const char *buf, size_t size,
 
 	printf("fs_write: %s\n", path);
 
-    file_entry_t* entry;
-    int file_idx = match_path(&fs_header, path, &entry);
+    file_entry* entry;
+    int file_idx = match_path(&header, path, &entry);
 
 	if (file_idx < 0)
 		return -ENOENT;
@@ -284,7 +284,7 @@ static int fs_write(const char *path, const char *buf, size_t size,
         return -ENOSPC;
     }
 
-    int file_offset = sizeof(fs_header_t) + FS_DATA_BLOCK_LEN*file_idx;
+    int file_offset = sizeof(fs_header) + FS_DATA_BLOCK_LEN*file_idx;
 	res = pwrite(fd, buf, size, file_offset + offset);
 	if (res == -1)
 		res = -errno;
@@ -305,8 +305,8 @@ static int fs_truncate(const char *path, off_t size,
 {
     printf("fs_truncate: %s\n", path);
 
-    file_entry_t* entry;
-    int file_idx = match_path(&fs_header, path, &entry);
+    file_entry* entry;
+    int file_idx = match_path(&header, path, &entry);
 
 	if (file_idx < 0)
 		return -ENOENT;
@@ -337,7 +337,7 @@ static int fs_truncate(const char *path, off_t size,
 
     char buf[FS_DATA_BLOCK_LEN];
     memset(buf, 0, FS_DATA_BLOCK_LEN);
-    int file_offset = sizeof(fs_header_t) + FS_DATA_BLOCK_LEN*file_idx;
+    int file_offset = sizeof(fs_header) + FS_DATA_BLOCK_LEN*file_idx;
     int res;
     if(size > entry->size) {
         res = pwrite(fd, buf, size - entry->size, file_offset + entry->size);
@@ -351,11 +351,11 @@ static int fs_truncate(const char *path, off_t size,
 	return r;
 }
 
-static int get_parent(const char* path, file_entry_t** parent_entry) {
+static int get_parent(const char* path, file_entry** parent_entry) {
     int lenpath = strlen(path);
 
     if(strcmp(path, "/")==0) {
-        *parent_entry = &fs_header.file_table[0];
+        *parent_entry = &header.file_table[0];
         return 0;
     }
 
@@ -382,7 +382,7 @@ static int get_parent(const char* path, file_entry_t** parent_entry) {
 
     // memcpy(name, &path[i+1], lenpath - i - 1);
 
-    int parent_idx = match_path(&fs_header, parent, parent_entry);
+    int parent_idx = match_path(&header, parent, parent_entry);
 
     return parent_idx;
 }
@@ -402,14 +402,14 @@ static int fs_mknod(const char *path, mode_t mode, dev_t rdev)
         return -EPERM;
     }
 
-    file_entry_t* parent_entry;
+    file_entry* parent_entry;
     int parent_idx = get_parent(path, &parent_entry);
     if(parent_idx < 0) {
         return -ENOENT;
     }
 
     for(int i=0; i<FS_MAX_FILE_COUNT; i++) {
-        file_entry_t* entry = &fs_header.file_table[i];
+        file_entry* entry = &header.file_table[i];
         if(strlen(entry->path) == 0) {
             strcpy(entry->path, path);
             entry->attr.is_dir = S_ISDIR(mode);
@@ -431,14 +431,14 @@ static int fs_mkdir(const char *path, mode_t mode)
         return -EPERM;
     }
 
-    file_entry_t* parent_entry;
+    file_entry* parent_entry;
     int parent_idx = get_parent(path, &parent_entry);
     if(parent_idx < 0) {
         return -ENOENT;
     }
 
     for(int i=0; i<FS_MAX_FILE_COUNT; i++) {
-        file_entry_t* entry = &fs_header.file_table[i];
+        file_entry* entry = &header.file_table[i];
         if(strlen(entry->path) == 0) {
             strcpy(entry->path, path);
             entry->attr.is_dir = 1;
@@ -454,8 +454,8 @@ static int fs_unlink(const char *path)
 {
     printf("fs_unlink: %s\n", path);
 
-    file_entry_t* entry;
-    int file_idx = match_path(&fs_header, path, &entry);
+    file_entry* entry;
+    int file_idx = match_path(&header, path, &entry);
 
     if(file_idx < 0) {
         return -ENOENT;
@@ -465,7 +465,7 @@ static int fs_unlink(const char *path)
         return -EPERM;
     }
 
-    memset(entry, 0, sizeof(file_entry_t));
+    memset(entry, 0, sizeof(file_entry));
     int r = write_header();
     return r;
 }
@@ -474,8 +474,8 @@ static int fs_rmdir(const char *path)
 {
     printf("fs_rmdir: %s\n", path);
 
-    file_entry_t* entry;
-    int file_idx = match_path(&fs_header, path, &entry);
+    file_entry* entry;
+    int file_idx = match_path(&header, path, &entry);
 
     if(file_idx < 0) {
         return -ENOENT;
@@ -491,14 +491,14 @@ static int fs_rmdir(const char *path)
     }
 
     for(int i=0; i<FS_MAX_FILE_COUNT; i++) {
-        const char* filename = get_filename(path, fs_header.file_table[i].path);
+        const char* filename = get_filename(path, header.file_table[i].path);
         if(filename != NULL) {
             // Not allow removing non empty directory
             return -EPERM;
         }
     }
 
-    memset(entry, 0, sizeof(file_entry_t));
+    memset(entry, 0, sizeof(file_entry));
     int r = write_header();
     return r;
 }
@@ -508,8 +508,8 @@ static int fs_rename(const char *from, const char *to, unsigned int flags)
 {
     printf("fs_rename: %s to %s\n", from, to);
 
-    file_entry_t* entry_from;
-    int from_idx = match_path(&fs_header, from, &entry_from);
+    file_entry* entry_from;
+    int from_idx = match_path(&header, from, &entry_from);
 
     if(from_idx < 0) {
         return -ENOENT;
@@ -519,8 +519,8 @@ static int fs_rename(const char *from, const char *to, unsigned int flags)
         return -EPERM;
     }
 
-    file_entry_t* entry_to;
-    int to_idx = match_path(&fs_header, to, &entry_to);
+    file_entry* entry_to;
+    int to_idx = match_path(&header, to, &entry_to);
     if(to_idx >= 0) {
         // New name already exist
         return -EPERM;
@@ -531,15 +531,15 @@ static int fs_rename(const char *from, const char *to, unsigned int flags)
         return -EPERM;
     }
 
-    file_entry_t* entry_new_parent;
+    file_entry* entry_new_parent;
     int new_parent_idx = get_parent(to, &entry_new_parent);
     if(new_parent_idx < 0 || !entry_new_parent->attr.is_dir) {
         // New dir not exist or is not dir
         return -EPERM;
     }
 
-    fs_header_t backup;
-    memmove(&backup, &fs_header, sizeof(fs_header));
+    fs_header backup;
+    memmove(&backup, &header, sizeof(header));
 
     strcpy(entry_from->path, to);
 
@@ -547,7 +547,7 @@ static int fs_rename(const char *from, const char *to, unsigned int flags)
     if(entry_from->attr.is_dir) {
         int err = 0;
         for(int i=0; i<FS_MAX_FILE_COUNT; i++) {
-            const char* filename = get_filename(from, fs_header.file_table[i].path);
+            const char* filename = get_filename(from, header.file_table[i].path);
             if(filename != NULL) {
                 int lenfile = strlen(filename);
                 if(lento + 1 + lenfile >= FS_MAX_FILENAME_LEN) {
@@ -559,12 +559,12 @@ static int fs_rename(const char *from, const char *to, unsigned int flags)
                 name[lento] = '/';
                 memmove(&name[lento+1], filename, lenfile);
                 name[lento + 1 + lenfile] = 0;
-                strcpy(fs_header.file_table[i].path, name);
+                strcpy(header.file_table[i].path, name);
             }
         }
         if(err) {
             // Roll back
-            memmove(&fs_header, &backup, sizeof(fs_header));
+            memmove(&header, &backup, sizeof(header));
             return -EPERM;
         }
     }
@@ -605,9 +605,9 @@ static int create_fs(const char* image_path)
     if(fd == -1) {
         return -1;
     }
-    fs_layout_t layout;
+    fs_layout layout;
     memset(&layout, 0, sizeof(layout));
-    file_entry_t* root_dir = &layout.header.file_table[0];
+    file_entry* root_dir = &layout.header.file_table[0];
     strcpy(root_dir->path, "/");
     root_dir->attr.is_dir = 1;
     int written = write(fd, &layout, sizeof(layout));
@@ -654,8 +654,8 @@ int main(int argc, char *argv[])
     if(fd == -1) {
         printf("Open FS header failed\n");
     }
-    int read_in = read(fd, &fs_header, sizeof(fs_header));
-    if(read_in != sizeof(fs_header)){
+    int read_in = read(fd, &header, sizeof(header));
+    if(read_in != sizeof(header)){
         printf("Read FS header failed\n");
     }
     close(fd);

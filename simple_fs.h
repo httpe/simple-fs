@@ -15,19 +15,19 @@ typedef struct file_entry {
         uint16_t reserved:15;
     } attr;
     uint16_t size;
-} file_entry_t;
+} file_entry;
 
 typedef struct data_block {
     char data[FS_DATA_BLOCK_LEN];
-} data_block_t;
+} data_block;
 
-typedef struct fs_header {
-    file_entry_t file_table[FS_MAX_FILE_COUNT];
-} fs_header_t;
+typedef struct header {
+    file_entry file_table[FS_MAX_FILE_COUNT];
+} fs_header;
 
 typedef struct fs_layout {
-    fs_header_t header;
-    data_block_t data[FS_MAX_FILE_COUNT];
-} fs_layout_t;
+    fs_header header;
+    data_block data[FS_MAX_FILE_COUNT];
+} fs_layout;
 
 #endif

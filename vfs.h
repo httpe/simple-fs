@@ -13,7 +13,7 @@ typedef struct fs_dirent {
     char name[FS_MAX_FILENAME_LEN]; // file name, max len = 260 + null terminator (referencing FAT32 max file name)
 } fs_dirent;
 
-int32_t fs_mount(block_storage_t* storage, const char* target, enum file_system_type file_system_type, 
+int32_t fs_mount(block_storage* storage, const char* target, enum file_system_type file_system_type, 
             fs_mount_option option, void* fs_option, fs_mount_point** mount_point);
 int32_t fs_unmount(const char* mount_root);
 int64_t fs_getattr(const char * path, struct fs_stat * stat);

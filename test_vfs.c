@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
     }
 
     // Assume to use first block storage
-    block_storage_t* storage = get_block_storage(0);
+    block_storage* storage = get_block_storage(0);
 
     if(make_fs) {
         printf("Formatting file system...\n");

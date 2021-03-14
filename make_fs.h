@@ -4,6 +4,6 @@
 #include <stdint.h>
 #include "block_io.h"
 
-int32_t fat32_make_fs(block_storage_t* storage, const char* bootloader_path);
+int32_t fat32_make_fs(block_storage* storage, const char* bootloader_path);
 
 #endif

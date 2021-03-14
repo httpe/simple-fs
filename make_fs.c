@@ -9,7 +9,7 @@
 
 #include "fat.h"
 
-int32_t fat32_make_fs(block_storage_t* storage, const char* bootloader_path)
+int32_t fat32_make_fs(block_storage* storage, const char* bootloader_path)
 {
     uint32_t bootloader_sector_count = 0;
     
@@ -61,7 +61,7 @@ int32_t fat32_make_fs(block_storage_t* storage, const char* bootloader_path)
     uint16_t date, time;
     fat32_set_timestamp(&date, &time);
 
-    fat32_bootsector_t boot = {
+    fat32_bootsector boot = {
         .bootjmp = {0xE9, 0x57, 0x00}, // jmp to the begining of boot_code
         .oem_name = "SimpleFS",
         .bytes_per_sector = storage->block_size,
@@ -102,7 +102,7 @@ int32_t fat32_make_fs(block_storage_t* storage, const char* bootloader_path)
         boot.table_sector_size_32++;
     }
 
-    fat32_fsinfo_t info = {
+    fat32_fsinfo info = {
         .lead_signature = 0x41615252,
         .reserved = {0},
         .structure_signature = 0x61417272,
@@ -117,8 +117,8 @@ int32_t fat32_make_fs(block_storage_t* storage, const char* bootloader_path)
     fat[1] = 0x0FFFFFFF; // EOC mark
     fat[2] = 0x0FFFFFFF; // EOC mark of the root dir
 
-    fat32_direntry_short_t* root_dir = malloc(boot.sectors_per_cluster*boot.bytes_per_sector);
-    root_dir[0] = (fat32_direntry_short_t) {
+    fat32_direntry_short* root_dir = malloc(boot.sectors_per_cluster*boot.bytes_per_sector);
+    root_dir[0] = (fat32_direntry_short) {
         .nameext = "NO NAME    ",
         .attr = FAT_ATTR_VOLUME_ID,
         .ctime_time = time,

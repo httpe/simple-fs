@@ -1,3 +1,6 @@
+#ifndef FAT_H
+#define FAT_H
+
 
 #include <stdint.h>
 
@@ -174,3 +177,5 @@ int32_t fat32_init(struct file_system* fs);
 
 // Used by make_fs
 void fat32_set_timestamp(uint16_t* date_entry, uint16_t* time_entry);
+
+#endif

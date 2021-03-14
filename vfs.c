@@ -10,6 +10,10 @@
 #include "file_descriptor.h"
 #include "errno.h"
 
+#define SEEK_SET 1
+#define SEEK_CUR 2
+#define SEEK_END 3
+
 #define N_MOUNT_POINT 16
 
 uint32_t next_mount_point_id = 1;
@@ -419,6 +423,36 @@ int64_t fs_read(int32_t fd, void *buf, uint32_t size)
     return res;
 }
 
+int64_t fs_lseek(int32_t fd, int64_t offset, int32_t whence)
+{
+    file* f = fd2file(fd);
+    if(f == NULL) {
+        return -EBADF;
+    }
+
+    if(whence == SEEK_CUR) {
+        f->offset += offset;
+    } else if(whence == SEEK_SET) {
+        f->offset = offset;
+    } else if(whence == SEEK_END) {
+        fs_stat st = {0};
+        if(f->mount_point->operations.getattr == NULL) {
+            // if file system does not support this operation
+            return -EPERM;
+        }
+        int res = f->mount_point->operations.getattr(f->mount_point, f->path, &st, NULL);
+        if(res<0){
+            return res;
+        }
+        f->offset = st.size + offset;
+    } else {
+        return -EPERM;
+    }
+
+    return 0;
+    
+}
+
 int64_t fs_write(int32_t fd, void *buf, uint32_t size)
 {
     file* f = fd2file(fd);
@@ -489,7 +523,7 @@ int main(int argc, char *argv[])
     int res_mknod = fs_mknod("/home/my_dir/my_file", 0);
     assert(res_mknod == 0);
 
-    // test open/read/write/close
+    // test open/read/write/lseek/close
     char buf_in[512], buf_out[512];
     strcpy(buf_in, "Hello World!");
     int fd = fs_open("/home/my_dir/my_file", 0);
@@ -505,6 +539,12 @@ int main(int argc, char *argv[])
     read = fs_read(fd, buf_out + 2, 100);
     assert(read == 11);
     assert(strcmp(buf_out, buf_in) == 0);
+    int lseek_res = fs_lseek(fd, -5, SEEK_END);
+    assert(lseek_res == 0);
+    read = fs_read(fd, buf_out, 100);
+    assert(read == 5);
+    printf("%s", buf_out);
+    assert(strcmp(buf_out, buf_in + strlen(buf_in) - 5 + 1) == 0);
     close_res = fs_close(fd);
     assert(close_res == 0);
 

@@ -293,10 +293,9 @@ int main(int argc, char *argv[])
         .fs = &fs,
         .storage = storage,
         .mount_target=args.argv[args.argc-1], 
-        .mount_option=mount_option, 
-        .fs_option = NULL
+        .mount_option=mount_option
     };
-    res = fs.mount(&mount_point);
+    res = fs.mount(&mount_point, NULL);
     if(res < 0) {
         printf("Fail to mount the file system, maybe the storage is not correctly formated?\n");
         exit(1);

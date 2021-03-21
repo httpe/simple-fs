@@ -35,6 +35,37 @@ int main(int argc, char *argv[])
 
     assert(init_vfs()==0);
 
+    // fs_mount_option mount_option = {0};
+    // fs_mount_point* mp = NULL;
+    // res = fs_mount(storage, "/", FILE_SYSTEM_FAT_32, mount_option, NULL, &mp);
+    // assert(res == 0);
+
+    // char buf_in[512] = {0}, buf_out[512] = {0};
+    // strcpy(buf_in, "Hello User I/O World!");
+    // int fd = fs_open("/RAND.OM", 0);
+    // assert(fd == 0);
+
+    // int read = fs_read(fd, buf_out, 10);
+    // assert(read == 10);
+    // printf("%s", buf_out);
+    // int close_res = fs_close(fd);
+    // assert(close_res == 0);
+
+    // fd = fs_open("/RAND.OM", 0);
+    // assert(fd == 0);
+    // int written = fs_write(fd, buf_in, strlen(buf_in) + 1);
+    // assert(written == strlen(buf_in) + 1);
+    // int seek_res = fs_seek(fd, -(strlen(buf_in) + 1), SEEK_WHENCE_CUR);
+    // assert(seek_res == 0);
+    // read = fs_read(fd, buf_out, strlen(buf_in) + 1);
+    // assert(read == strlen(buf_in) + 1);
+    // assert(strcmp(buf_out, buf_in) == 0);
+    // close_res = fs_close(fd);
+    // assert(close_res == 0);
+
+    // return 0;
+
+
     fs_mount_option mount_option = {0};
     fs_mount_point* mp = NULL;
     res = fs_mount(storage, "/home", FILE_SYSTEM_FAT_32, mount_option, NULL, &mp);
@@ -52,7 +83,7 @@ int main(int argc, char *argv[])
     int res_mknod = fs_mknod("/home/my_dir/my_file", 0);
     assert(res_mknod == 0);
 
-    // test open/read/write/lseek/close
+    // test open/read/write/seek/close
     char buf_in[512], buf_out[512];
     strcpy(buf_in, "Hello World!");
     int fd = fs_open("/home/my_dir/my_file", 0);
@@ -68,8 +99,8 @@ int main(int argc, char *argv[])
     read = fs_read(fd, buf_out + 2, 100);
     assert(read == 11);
     assert(strcmp(buf_out, buf_in) == 0);
-    int lseek_res = fs_lseek(fd, -5, LSEEK_WHENCE_END);
-    assert(lseek_res == 0);
+    int seek_res = fs_seek(fd, -5, SEEK_WHENCE_END);
+    assert(seek_res == 0);
     read = fs_read(fd, buf_out, 100);
     assert(read == 5);
     assert(strcmp(buf_out, buf_in + strlen(buf_in) - 5 + 1) == 0);

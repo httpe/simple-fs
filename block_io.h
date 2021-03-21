@@ -1,5 +1,5 @@
-#ifndef BLOCK_STORAGE_API_H
-#define BLOCK_STORAGE_API_H
+#ifndef _BLOCK_IO_H
+#define _BLOCK_IO_H
 
 #include <stdint.h>
 

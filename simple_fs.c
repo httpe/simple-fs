@@ -487,7 +487,7 @@ static int fs_rmdir(const char *path)
 
     if(!entry->attr.is_dir) {
         // Not allow to perform rmdir on file
-        return -ENOTEMPTY;
+        return -EPERM;
     }
 
     for(int i=0; i<FS_MAX_FILE_COUNT; i++) {
